@@ -1,0 +1,151 @@
+{
+    "dataset_configs": [
+        {
+            "num_task_to_be_fetched": 1,
+            "num_target_data": 200,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 501,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 502,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 503,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 7,
+            "num_target_data": 1400,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 504,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 505,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 506,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 13,
+            "num_target_data": 2600,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 507,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 508,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 509,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 25,
+            "num_target_data": 5000,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 510,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 511,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 512,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 50,
+            "num_target_data": 10000,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 513,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 514,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 515,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 2,
+            "num_target_data": 400,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 516,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 517,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 518,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 3,
+            "num_target_data": 600,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 519,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 520,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 521,
+                    "random_seed": 456
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,109 @@
+{
+    "dataset_configs": [
+        {
+            "num_task_to_be_fetched": 1,
+            "num_target_data": 200,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 51,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 52,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 53,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 2,
+            "num_target_data": 400,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 54,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 55,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 56,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 3,
+            "num_target_data": 600,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 57,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 58,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 59,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 4,
+            "num_target_data": 800,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 60,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 61,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 62,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 5,
+            "num_target_data": 1000,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 63,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 64,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 65,
+                    "random_seed": 456
+                }
+            ]
+        }
+    ]
+}

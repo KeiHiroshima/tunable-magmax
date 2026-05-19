@@ -1,0 +1,164 @@
+{
+    "dataset_configs": [
+        {
+            "num_task_to_be_fetched": 2,
+            "ratio_task_to_be_fetched": [
+                0.5,
+                0.5
+            ],
+            "variants": [
+                {
+                    "target_id": 1,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 2,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 3,
+                    "random_seed": 456
+                },
+                {
+                    "target_id": 4,
+                    "random_seed": 789
+                },
+                {
+                    "target_id": 5,
+                    "random_seed": 1011
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 2,
+            "ratio_task_to_be_fetched": [
+                0.8,
+                0.2
+            ],
+            "variants": [
+                {
+                    "target_id": 6,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 7,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 8,
+                    "random_seed": 456
+                },
+                {
+                    "target_id": 9,
+                    "random_seed": 789
+                },
+                {
+                    "target_id": 10,
+                    "random_seed": 1011
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 3,
+            "ratio_task_to_be_fetched": [
+                0.33,
+                0.33,
+                0.33
+            ],
+            "variants": [
+                {
+                    "target_id": 11,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 12,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 13,
+                    "random_seed": 456
+                },
+                {
+                    "target_id": 14,
+                    "random_seed": 789
+                },
+                {
+                    "target_id": 15,
+                    "random_seed": 1011
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 3,
+            "ratio_task_to_be_fetched": [
+                0.6,
+                0.2,
+                0.2
+            ],
+            "variants": [
+                {
+                    "target_id": 16,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 17,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 18,
+                    "random_seed": 456
+                },
+                {
+                    "target_id": 19,
+                    "random_seed": 789
+                },
+                {
+                    "target_id": 20,
+                    "random_seed": 1011
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 3,
+            "ratio_task_to_be_fetched": [
+                0.4,
+                0.4,
+                0.2
+            ],
+            "variants": [
+                {
+                    "target_id": 21,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 22,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 23,
+                    "random_seed": 456
+                },
+                {
+                    "target_id": 24,
+                    "random_seed": 789
+                },
+                {
+                    "target_id": 25,
+                    "random_seed": 1011
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": -1,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 26,
+                    "random_seed": 42
+                }
+            ]
+        }
+    ]
+}

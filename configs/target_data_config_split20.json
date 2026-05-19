@@ -1,0 +1,130 @@
+{
+    "dataset_configs": [
+        {
+            "num_task_to_be_fetched": 1,
+            "num_target_data": 200,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 201,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 202,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 203,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 2,
+            "num_target_data": 400,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 204,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 205,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 206,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 3,
+            "num_target_data": 600,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 207,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 208,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 209,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 5,
+            "num_target_data": 1000,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 210,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 211,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 212,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 10,
+            "num_target_data": 2000,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 213,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 214,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 215,
+                    "random_seed": 456
+                }
+            ]
+        },
+        {
+            "num_task_to_be_fetched": 20,
+            "num_target_data": 4000,
+            "ratio_task_to_be_fetched": [
+                -1
+            ],
+            "variants": [
+                {
+                    "target_id": 216,
+                    "random_seed": 42
+                },
+                {
+                    "target_id": 217,
+                    "random_seed": 123
+                },
+                {
+                    "target_id": 218,
+                    "random_seed": 456
+                }
+            ]
+        }
+    ]
+}
