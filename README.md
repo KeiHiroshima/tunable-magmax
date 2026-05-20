@@ -36,6 +36,19 @@ The code is separated into two parts:
 
 A combined script that runs both steps sequentially is also provided as `scripts/finetune_merge.sh`.
 
+### Step 0: Configure paths
+
+Set the two directory paths in `src/config.py` before running any scripts:
+
+- `BASE_DIR` — root directory where model checkpoints will be saved
+- `DATA_DIR` — root directory containing the datasets
+
+Alternatively, you can set environment variables instead of editing the file:
+```bash
+export MAGMAX_BASE_DIR=/path/to/checkpoints
+export MAGMAX_DATA_DIR=/path/to/data
+```
+
 ### Step 1: Fine-tuning
 
 Edit the parameters in `scripts/finetune.sh` (model, dataset, n\_splits, task\_seq, seed, etc.) and run:
