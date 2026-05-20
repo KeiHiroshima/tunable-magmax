@@ -13,7 +13,8 @@ gpu_id=0
 num_train_data_each_task=500
 merge_fn=masked_magmax_with_targetdata  # masked_magmax_with_targetdata finetune magmax ties average random_mix select_one_task_vector
 ft_dir_name=finetune_target_data
-merge_dir_name=merging_target_data_cameraready
+
+merge_dir_name=DEFAULT_NAME
 
 # --- Finetune ---
 echo "======================================================================================"
@@ -57,9 +58,8 @@ mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 
 if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
-    for similarity_metric in labels ot_embedded cosine_embedded mmd_embedded; do
-        python merge_for_targetdata.py --model ${model} --dataset ${dataset} --epochs ${epochs} --n_splits ${n_splits} --split_strategy class --sequential-finetuning --results_db ${log_dir} --taskseq_pattern ${task_seq} --merge_fn ${merge_fn} --similarity_metric ${similarity_metric} --num_train_data_each_task ${num_train_data_each_task} --num_target_data ${num_target_data} --seed ${seed} --gpu_id ${gpu_id}
-    done
+    similarity_metric=labels #labels ot_embedded cosine_embedded mmd_embedded
+    python merge_for_targetdata.py --model ${model} --dataset ${dataset} --epochs ${epochs} --n_splits ${n_splits} --split_strategy class --sequential-finetuning --results_db ${log_dir} --taskseq_pattern ${task_seq} --merge_fn ${merge_fn} --similarity_metric ${similarity_metric} --num_train_data_each_task ${num_train_data_each_task} --num_target_data ${num_target_data} --seed ${seed} --gpu_id ${gpu_id}
 else
     python merge_for_targetdata.py --model ${model} --dataset ${dataset} --epochs ${epochs} --n_splits ${n_splits} --split_strategy class --sequential-finetuning --results_db ${log_dir} --taskseq_pattern ${task_seq} --merge_fn ${merge_fn} --num_train_data_each_task ${num_train_data_each_task} --num_target_data ${num_target_data} --seed ${seed} --gpu_id ${gpu_id}
 fi

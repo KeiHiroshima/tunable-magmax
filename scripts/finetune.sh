@@ -9,7 +9,7 @@ epochs=10
 n_splits=5        # 5 20 50
 task_seq=A        # A B C
 seed=3            # 3 4 5
-dir_name=finetune_target_data
+dir_name=DEFAULT_NAME
 
 echo "======================================================================================"
 echo "Finetuning ${model} on ${dataset}-${n_splits} (pattern: ${task_seq}) seed=${seed}"

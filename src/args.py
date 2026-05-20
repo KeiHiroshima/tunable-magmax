@@ -3,7 +3,6 @@ import random
 
 import numpy as np
 import torch
-
 from src.config import DATA_DIR, OPENCLIP_CACHE_DIR
 
 
@@ -130,7 +129,9 @@ def parse_arguments():
 
     # OTHER
     parser.add_argument("--seed", default=5, type=int)
-    parser.add_argument("--wandb_entity_name", type=str, default="KeiHiroshima")
+    parser.add_argument(
+        "--wandb_entity_name", type=str, default="YOUR_WANDB_ENTITY_NAME"
+    )
 
     parser.add_argument(
         "--taskseq_pattern",

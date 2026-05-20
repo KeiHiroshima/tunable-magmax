@@ -296,4 +296,3 @@ dependencies:
       - wcwidth==0.2.13
       - xxhash==3.5.0
       - yarl==1.20.1
-prefix: /home/KeiHiroshima/miniconda3/envs/magmax

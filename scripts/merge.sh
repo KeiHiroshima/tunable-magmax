@@ -8,8 +8,8 @@ task_seq=A
 seed=3            # 3 4 5
 gpu_id=0
 num_train_data_each_task=500
-merge_fn=masked_magmax_with_targetdata  # masked_magmax_with_targetdata finetune magmax ties average random_mix select_one_task_vector
-dir_name=merging_target_data
+merge_fn=masked_magmax_with_targetdata #finetune magmax ties average random_mix select_one_task_vector masked_magmax_with_targetdata
+dir_name=DEFAULT_NAME
 
 
 if [ $n_splits -eq 5 ]; then
