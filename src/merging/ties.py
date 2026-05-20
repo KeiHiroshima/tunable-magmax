@@ -1,3 +1,7 @@
+# TIES-Merging implementation adapted from:
+#   TIES-Merging (Yadav et al., NeurIPS 2023) https://github.com/prateeky2806/ties-merging
+#   BSD 3-Clause License — Copyright (c) 2022 Salesforce, Inc.
+
 import copy
 from collections import OrderedDict
 from logging import getLogger

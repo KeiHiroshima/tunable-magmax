@@ -4,7 +4,6 @@ from logging import getLogger
 
 import torch
 import tqdm
-
 from src.config import get_zeroshot_checkpoint
 from src.datasets.common import (
     construct_target_dataset,
@@ -216,7 +215,7 @@ def evaluate_merged_fts_on_target_data(
         seed=args.seed,
     )
 
-    with open(os.path.abspath("configs", f"{args.target_config}.json"), "r") as f:
+    with open(os.path.join("configs", f"{args.target_config}.json"), "r") as f:
         target_data_configs = json.load(f)["dataset_configs"]
 
     is_similarity_merge = merging_f.__name__ == "merge_max_abs_masked_with_targetdata"

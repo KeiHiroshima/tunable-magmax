@@ -1,7 +1,4 @@
-# Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning
-Kei Hiroshima, Kento Uchida, Shinichi Shirakawa, "Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning," ICPR 2026.
-
-# Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning
+# Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning [arXiv]()
 
 This is the official repository for the paper:
 
@@ -28,8 +25,6 @@ If it does not work, the env was created by the following commands:
 ```bash
 conda create --name magmax python=3.10
 conda activate magmax
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-pip install wandb tqdm open_clip_torch scipy
 ```
 
 
@@ -61,7 +56,7 @@ The key parameter `merge_fn` selects the merging strategy:
 
 When using `masked_magmax_with_targetdata`, the `similarity_metric` parameter controls how the preference vector is constructed:
 - `labels` — label-based similarity
-- `ot_embedded`, `cosine_embedded`, `mmd_embedded` — embedding-based metrics
+- `ot_embedded`, `cosine_embedded`, `mmd_embedded` — embedded feature-based metrics
 
 ### Combined run
 
@@ -75,9 +70,31 @@ bash scripts/finetune_merge.sh
 Use `CUDA_VISIBLE_DEVICES=X` to restrict GPU usage to a specific device (set via `gpu_id` in the scripts).
 
 
-## Credits
+## Third-Party Code
 
-This repo is based on [MAGMAX](https://github.com/danielm1405/magmax) (Marczak et al., ECCV 2024).
+### MAGMAX
+Source: https://github.com/danielm1405/magmax<br>
+Paper: Marczak, D., Twardowski, B., Trzciński, T., & Cygert, S. (2024).<br>
+[MagMax: Leveraging Model Merging for Seamless Continual Learning](http://arxiv.org/abs/2407.06322). ECCV2024<br>
+License: No license (as of 2026-05-20). Used with the intent to comply with any future license.<br>
+Files: src/modeling.py, src/heads.py, src/merging/task_vector.py, src/merging/ties.py,
+       src/datasets/imagenetr.py, src/datasets/registry.py, src/args.py,
+       src/utils.py, src/trainer.py, src/eval.py, src/datasets/common.py, src/datasets/cifar100.py
+Modified files: `finetune_spilitted.py, merge_for_targetdata.py, and files in src/`
+
+### perceptionCLIP
+Source: https://github.com/umd-huang-lab/perceptionCLIP<br>
+Paper: An, B., Zhu, S., Panaitescu-Liess, M.-A., Mummadi, C. K., & Huang, F. (2024).<br>
+[PerceptionCLIP: Visual Classification by Inferring and Conditioning on Contexts](https://arxiv.org/abs/2308.01313). ICLR 2024<br>
+License: MIT License (Copyright (c) 2023 CMU Locus Lab)<br>
+Files: `src/datasets/templates.py (partial)`
+
+### TIES-Merging
+Source: https://github.com/prateeky2806/ties-merging<br>
+Paper: Yadav, P., Tam, D., Choshen, L., Raffel, C., & Bansal, M. (2023).<br>
+[TIES-Merging: Resolving Interference When Merging Models](http://arxiv.org/abs/2306.01708). NeurIPS 2023<br>
+License: BSD 3-Clause License (Copyright (c) 2022 Salesforce, Inc.)<br>
+Files: `src/merging/ties.py`
 
 
 ## Citation

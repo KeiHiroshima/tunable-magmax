@@ -5,11 +5,9 @@ from logging import getLogger
 from pathlib import Path
 
 import torch
-from torch.nn.functional import softmax
-
 from src.args import parse_arguments
 from src.config import get_zeroshot_checkpoint
-from src.datasets.common import _get_task_classes
+from src.datasets.common import get_task_classes
 from src.datasets.registry import get_dataset
 from src.merging.similarity import (
     FeatureCost,
@@ -120,7 +118,7 @@ def merge_max_abs_masked_with_targetdata(
                 args_=args,
             ).default_class_order
             task_class_dict = {
-                i: _get_task_classes(class_order, args.n_splits, i)
+                i: get_task_classes(class_order, args.n_splits, i)
                 for i in range(args.n_splits)
             }
 
@@ -157,21 +155,13 @@ def merge_max_abs_masked_with_targetdata(
 
             similarity_score_list[i] = similarity_score
 
-    if False:
-        temperature = 1.0
-        similarity_score_list = [s / temperature for s in similarity_score_list]
-        weights_each_task = softmax(torch.tensor(similarity_score_list), dim=0).tolist()
-        logger.debug("weights_each_task was made by softmax")
-        breakpoint()
-
-    if True:
-        # calculate weights based on similarity scores
-        total_score = sum(similarity_score_list)
-        weights_each_task = [
-            similarity_score_list[i] / total_score
-            for i in range(len(similarity_score_list))
-        ]
-        logger.debug(f"total_score: {total_score}")
+    # calculate weights based on similarity scores
+    total_score = sum(similarity_score_list)
+    weights_each_task = [
+        similarity_score_list[i] / total_score
+        for i in range(len(similarity_score_list))
+    ]
+    logger.debug(f"total_score: {total_score}")
 
     logger.debug(f"similarity metric: {similarity_metric}")
     logger.debug(f"similarity_score_list: {similarity_score_list}")
