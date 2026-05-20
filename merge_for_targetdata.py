@@ -18,12 +18,12 @@ from src.utils import setup_logging
 
 warnings.simplefilter("ignore")
 
-# Config
-args = parse_arguments()
-pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
-
 
 def main():
+
+    # Config
+    args = parse_arguments()
+    pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
     logger = setup_logging(level=args.logger_mode)
 
     suffix = ""

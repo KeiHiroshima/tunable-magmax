@@ -35,10 +35,10 @@ def finetune(args):
     for split_idx in range(args.n_splits):
         logger.info(f"\n##### SPLIT {split_idx} #####")
         ft_path = os.path.join(ckpdir, f"finetuned_{split_idx}.pt")
-        if os.path.exists(os.path.join(ckpdir, f"finetuned_{split_idx}.pt")):
+        if os.path.exists(ft_path):
             logger.info(
                 f"Skipping finetuning on split {split_idx}, "
-                f"ckpt already exists under {os.path.join(ckpdir, f'finetuned_{split_idx}.pt')}"
+                f"ckpt already exists under {ft_path}"
             )
             continue
 
