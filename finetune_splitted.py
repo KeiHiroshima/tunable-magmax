@@ -3,7 +3,6 @@ import warnings
 from logging import getLogger
 
 import torch
-
 import wandb
 from src.args import parse_arguments
 from src.cl_utils import get_dataset_and_classifier_for_split
@@ -130,7 +129,7 @@ if __name__ == "__main__":
         entity=args.wandb_entity_name,
         name=f"{args.dataset}-{args.n_splits}-pattern:{args.taskseq_pattern}-seed:{args.seed}",
         config=args,
-        reinit=True,
+        reinit="create_new",
         tags=[
             "ft",
             "CIL",
