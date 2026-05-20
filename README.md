@@ -113,10 +113,10 @@ Files: `src/merging/ties.py`
 ## Citation
 If you find this work useful, please consider citing it:
 ```bibtex
-@inproceedings{hiroshima2025tunablemagmax,
+@inproceedings{hiroshima2026tunablemagmax,
     title     = {Tunable {MAGMAX}: Preference-Aware Model Merging for Continual Learning},
     author    = {Kei Hiroshima and Kento Uchida and Shinichi Shirakawa},
     booktitle = {International Conference on Pattern Recognition}
-    year      = {2025}
+    year      = {2026}
 }
 ```
