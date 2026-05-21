@@ -1,4 +1,4 @@
-# Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning [arXiv]()
+# Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning [arXiv](https://arxiv.org/abs/2605.20803)
 
 This is the official repository for the paper:
 
