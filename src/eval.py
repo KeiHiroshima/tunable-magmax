@@ -337,3 +337,6 @@ def evaluate_merged_fts_on_target_data(
             )
 
             _save_target_eval_results(log_data, merging_f, args, suffix_dir, file_name)
+
+            del image_encoder
+            torch.cuda.empty_cache()

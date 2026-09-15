@@ -48,7 +48,7 @@ def finetune(args):
         elif args.sequential_finetuning and split_idx != 0:
             prev_ckpt = os.path.join(ckpdir, f"finetuned_{split_idx - 1}.pt")
             logger.info(f"Loading image encoder from prev task {prev_ckpt=}")
-            image_encoder = torch.load(prev_ckpt)
+            image_encoder = torch.load(prev_ckpt, weights_only=False)
         else:
             logger.info(f"Building image encoder: {args.model}.")
             image_encoder = ImageEncoder(args, keep_lang=True)
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     logger = setup_logging(level=args.logger_mode)
 
     args.lr = 1e-5
-    args.batch_size = 128
+    args.batch_size = 32
 
     args.save_ssd = BASE_DIR
     sequential_ft_dir = "sequential_finetuning/" if args.sequential_finetuning else ""
