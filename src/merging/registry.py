@@ -3,11 +3,15 @@ backends only (src/backends/vision_backend.py keeps its own copy of this
 dict exactly as it was in the original merge_for_targetdata.py, unchanged).
 
 Deliberately excludes two entries from the original merge_fn_dict:
-- "masked_magmax_with_targetdata": needs a target-data config (analogous to
-  configs/target_data_config*.json) that doesn't exist for NLP yet.
+- "masked_magmax_with_targetdata": doesn't go through this single-call
+  registry at all for NLP — it needs a whole target-environment-construction
+  flow (which tasks, in what ratio, sampled eval data), not just a
+  task_vectors -> TaskVector function. See
+  src/backends/nlp_classification_backend.py::_merge_and_evaluate_masked and
+  src/nlp/target_data.py.
 - "select_one_task_vector": needs vision-specific args (a classification
   head + target_dataset_meta) not available outside the vision pipeline.
-Both are candidates for a follow-up once NLP target-data support exists.
+  Candidate for a follow-up if needed.
 """
 
 from src.merging.task_vectors import merge_max_abs, merge_rnd_mix, ties

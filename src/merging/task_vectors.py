@@ -79,97 +79,17 @@ def merge_max_abs(task_vectors):
     return TaskVector(vector=new_vector)
 
 
-def merge_max_abs_masked_with_targetdata(
-    task_vectors,
-    train_subset_each_task,
-    target_data,
-    similarity_metric="cosine",
-    args=None,
-):
-    # calculate similarity scores between train_data and target_data
-    similarity_score_list = [None for _ in range(len(train_subset_each_task))]
-    distance_metric = {
-        "labels": count_labels,
-        "cosine": compute_cosine_similarity,
-        "mmd": compute_mmd_similarity,
-        "ot": compute_otdd_similarity,
-        "hpo": run_optmization,
-    }
-    similarity_metric_key = (
-        similarity_metric.split("_")[0]
-        if "_" in similarity_metric
-        else similarity_metric
-    )
+def mask_and_merge_by_weights(task_vectors, weights_each_task):
+    """Masked MAGMAX merge given a fixed per-task weight vector (summing to 1).
 
-    if similarity_metric == "hpo":
-        similarity_score_list = distance_metric[similarity_metric_key](
-            task_vectors=task_vectors,
-            target_dataset_meta=target_data,
-            args=args,
-        )
-    else:
-        if similarity_metric == "labels":
-            preprocess_fn = ImageEncoder(args, keep_lang=True).train_preprocess
-            class_order = get_dataset(
-                args.dataset,
-                preprocess_fn,
-                location=args.data_location,
-                batch_size=args.batch_size,
-                args_=args,
-            ).default_class_order
-            task_class_dict = {
-                i: get_task_classes(class_order, args.n_splits, i)
-                for i in range(args.n_splits)
-            }
-
-        for i, train_subset_onetask in enumerate(train_subset_each_task):
-            if similarity_metric == "labels":
-                similarity_score = distance_metric[similarity_metric_key](
-                    target_data, task_class_dict=task_class_dict, task_idx=i
-                )
-            else:
-                if "embedded" in similarity_metric:
-                    logger.debug(
-                        f"Using {similarity_metric_key} similarity with embedded data."
-                    )
-                    encoder = task_vectors[i].apply_to(
-                        pretrained_checkpoint, scaling_coef=1.0
-                    )
-                    feature_cost = FeatureCost(
-                        src_embedding=encoder,
-                        tgt_embedding=encoder,
-                        device=args.device,
-                    )
-                else:
-                    logger.debug(
-                        f"Using {similarity_metric_key} similarity with raw data."
-                    )
-                    feature_cost = None
-
-                similarity_score = distance_metric[similarity_metric_key](
-                    train_subset_onetask,
-                    target_data,
-                    feature_cost=feature_cost,
-                    device=args.device,
-                )
-
-            similarity_score_list[i] = similarity_score
-
-    # calculate weights based on similarity scores
-    total_score = sum(similarity_score_list)
-    weights_each_task = [
-        similarity_score_list[i] / total_score
-        for i in range(len(similarity_score_list))
-    ]
-    logger.debug(f"total_score: {total_score}")
-
-    logger.debug(f"similarity metric: {similarity_metric}")
-    logger.debug(f"similarity_score_list: {similarity_score_list}")
-    logger.debug(f"weights_each_task: {weights_each_task}")
-
-    # masked MAGMAX merging with calculated number of elements per task vector
-    # 1. calculate number of elements to take from each task vector
-    # 2. perform masked MAGMAX merging
+    Extracted from merge_max_abs_masked_with_targetdata's tail: this half of
+    that function only ever used task_vectors and weights_each_task, never
+    anything vision-specific (ImageEncoder, class_order, ...) — that lives in
+    the *other* half, which computes weights_each_task from similarity.
+    Pulled out so a non-vision caller can supply weights_each_task some other
+    way (e.g. directly from a target environment's known task distribution)
+    without duplicating this ~200-line tensor-masking routine.
+    """
     with torch.no_grad():
         new_vector = {}
         num_unaligned_accum_dict = {
@@ -398,6 +318,103 @@ def merge_max_abs_masked_with_targetdata(
             assert winner_indices_distribution == elements_per_task_list, (
                 f"winner_indices_distribution: {winner_indices_distribution}, elements_per_task_list: {elements_per_task_list}"
             )
+
+    return TaskVector(vector=new_vector), num_unaligned_accum_dict, num_params_all
+
+
+def merge_max_abs_masked_with_targetdata(
+    task_vectors,
+    train_subset_each_task,
+    target_data,
+    similarity_metric="cosine",
+    args=None,
+):
+    # calculate similarity scores between train_data and target_data
+    similarity_score_list = [None for _ in range(len(train_subset_each_task))]
+    distance_metric = {
+        "labels": count_labels,
+        "cosine": compute_cosine_similarity,
+        "mmd": compute_mmd_similarity,
+        "ot": compute_otdd_similarity,
+        "hpo": run_optmization,
+    }
+    similarity_metric_key = (
+        similarity_metric.split("_")[0]
+        if "_" in similarity_metric
+        else similarity_metric
+    )
+
+    if similarity_metric == "hpo":
+        similarity_score_list = distance_metric[similarity_metric_key](
+            task_vectors=task_vectors,
+            target_dataset_meta=target_data,
+            args=args,
+        )
+    else:
+        if similarity_metric == "labels":
+            preprocess_fn = ImageEncoder(args, keep_lang=True).train_preprocess
+            class_order = get_dataset(
+                args.dataset,
+                preprocess_fn,
+                location=args.data_location,
+                batch_size=args.batch_size,
+                args_=args,
+            ).default_class_order
+            task_class_dict = {
+                i: get_task_classes(class_order, args.n_splits, i)
+                for i in range(args.n_splits)
+            }
+
+        for i, train_subset_onetask in enumerate(train_subset_each_task):
+            if similarity_metric == "labels":
+                similarity_score = distance_metric[similarity_metric_key](
+                    target_data, task_class_dict=task_class_dict, task_idx=i
+                )
+            else:
+                if "embedded" in similarity_metric:
+                    logger.debug(
+                        f"Using {similarity_metric_key} similarity with embedded data."
+                    )
+                    encoder = task_vectors[i].apply_to(
+                        pretrained_checkpoint, scaling_coef=1.0
+                    )
+                    feature_cost = FeatureCost(
+                        src_embedding=encoder,
+                        tgt_embedding=encoder,
+                        device=args.device,
+                    )
+                else:
+                    logger.debug(
+                        f"Using {similarity_metric_key} similarity with raw data."
+                    )
+                    feature_cost = None
+
+                similarity_score = distance_metric[similarity_metric_key](
+                    train_subset_onetask,
+                    target_data,
+                    feature_cost=feature_cost,
+                    device=args.device,
+                )
+
+            similarity_score_list[i] = similarity_score
+
+    # calculate weights based on similarity scores
+    total_score = sum(similarity_score_list)
+    weights_each_task = [
+        similarity_score_list[i] / total_score
+        for i in range(len(similarity_score_list))
+    ]
+    logger.debug(f"total_score: {total_score}")
+
+    logger.debug(f"similarity metric: {similarity_metric}")
+    logger.debug(f"similarity_score_list: {similarity_score_list}")
+    logger.debug(f"weights_each_task: {weights_each_task}")
+
+    # masked MAGMAX merging with calculated number of elements per task vector
+    merged_tv, num_unaligned_accum_dict, num_params_all = mask_and_merge_by_weights(
+        task_vectors, weights_each_task
+    )
+    new_vector = merged_tv.vector
 
     logger.info(f"num_unaligned_accum_dict: {num_unaligned_accum_dict}")
 

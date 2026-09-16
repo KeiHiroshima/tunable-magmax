@@ -58,7 +58,11 @@ def train_seq2seq_task(model, task: TaskSpec, args):
 
 
 @torch.no_grad()
-def classification_accuracy(model, eval_loader, device) -> float:
+def classification_correct_and_total(model, eval_loader, device) -> tuple[int, int]:
+    """(num_correct, num_examples) — kept separate from accuracy so callers
+    merging results across several tasks (e.g. a target-environment mix) can
+    sum exact counts instead of averaging already-rounded per-task ratios.
+    """
     model.eval()
     correct, total = 0, 0
     for batch in eval_loader:
@@ -66,6 +70,11 @@ def classification_accuracy(model, eval_loader, device) -> float:
         pred = logits.argmax(dim=-1).cpu()
         correct += (pred == batch["labels"]).sum().item()
         total += len(pred)
+    return correct, total
+
+
+def classification_accuracy(model, eval_loader, device) -> float:
+    correct, total = classification_correct_and_total(model, eval_loader, device)
     return correct / total
 
 
