@@ -15,13 +15,18 @@ This is the official repository for the paper:
 
 ## Installation
 
-For a quick installation use the following commands:
+Install with [uv](https://docs.astral.sh/uv/):
+```bash
+uv sync
+```
+This installs PyTorch from the CUDA 12.8 wheel index configured in `pyproject.toml` (`[tool.uv.sources]` / `[[tool.uv.index]]`). If your GPU/driver needs a different CUDA version, edit that index URL before running `uv sync`. All commands below are run as `uv run python ...` instead of `python ...`.
+
+The vision pipeline (CIFAR100/ImageNetR) also works under conda instead:
 ```bash
 conda env create
 conda activate magmax
 ```
-
-If it does not work, the env was created by the following commands:
+If that does not work, the env was created by the following commands:
 ```bash
 conda create --name magmax python=3.10
 conda activate magmax
@@ -35,6 +40,15 @@ The code is separated into two parts:
 * merging — `merge_for_targetdata.py` via `scripts/merge.sh`
 
 A combined script that runs both steps sequentially is also provided as `scripts/finetune_merge.sh`.
+
+### Backends
+
+`finetune_splitted.py` and `merge_for_targetdata.py` are thin entry points: they parse args and dispatch on `--dataset` to a backend module (`src/backends/registry.py`) that implements `finetune(args)` / `merge_and_evaluate(args)`.
+
+| `--dataset` | Backend | Pipeline |
+|---|---|---|
+| `CIFAR100`, `ImageNetR` | `src/backends/vision_backend.py` | vision (CLIP/ViT), described in Steps 0–2 below |
+| `LSB`, `CITB19`, `CITB38` | `src/backends/nlp_classification_backend.py` / `nlp_seq2seq_backend.py` | text, described in [NLP tasks](#nlp-tasks) |
 
 ### Step 0: Configure paths
 
@@ -81,6 +95,35 @@ bash scripts/finetune_merge.sh
 ### Tips
 
 Use `CUDA_VISIBLE_DEVICES=X` to restrict GPU usage to a specific device (set via `gpu_id` in the scripts).
+
+
+## NLP tasks
+
+`finetune_splitted.py` and `merge_for_targetdata.py` also run text tasks on a BERT-base backbone (no ViT/CLIP involved), selected via `--dataset`:
+
+| `--dataset` | Benchmark | Backbone |
+|---|---|---|
+| `LSB` | Long Sequence Benchmark — 15 text classification tasks | `BertClassifier` (`src/nlp/modeling_nlp.py`) |
+| `CITB19` | CITB InstrDialog — 19 instruction-following tasks | BERT2BERT encoder-decoder |
+| `CITB38` | CITB InstrDialog++ — 38 instruction-following tasks | BERT2BERT encoder-decoder |
+
+`--model` should be a Hugging Face model name (`bert-base-uncased` by default in `src/nlp/modeling_nlp.py`). `MAGMAX_BASE_DIR` (see Step 0 above) is still used for checkpoint storage; `MAGMAX_DATA_DIR` is not used since data is streamed from the Hugging Face Hub instead (cached under `~/.cache/huggingface` by default, or wherever `HF_HOME` points).
+
+```bash
+uv run python finetune_splitted.py --model bert-base-uncased --dataset LSB --epochs 3 --taskseq_pattern A --seed 3
+uv run python merge_for_targetdata.py --model bert-base-uncased --dataset LSB --epochs 3 --taskseq_pattern A --seed 3 --merge_fn magmax
+```
+
+Same two commands work for `--dataset CITB19` / `CITB38`. `--taskseq_pattern` (`A`/`B`/`C`) selects a fixed task order per dataset, defined in `TASK_ORDER_PATTERNS` in `src/nlp/long_sequence_benchmark.py` / `src/nlp/citb_superni.py`.
+
+Supported `--merge_fn` values for NLP datasets: `magmax`, `ties`, `average`, `random_mix`, `finetune`. `masked_magmax_with_targetdata` and `select_one_task_vector` are vision-only for now (see `src/merging/registry.py`).
+
+### Tests
+
+```bash
+uv run pytest test/ -v
+```
+Exercises the NLP data loading, model wrappers, and merging integration against real Hugging Face-hosted datasets/models (network required on first run; downloads are cached under `datasets/hf_cache`).
 
 
 ## Third-Party Code
