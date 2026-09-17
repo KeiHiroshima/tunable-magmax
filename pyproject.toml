@@ -8,7 +8,6 @@ dependencies = [
     "geomloss>=0.3.1",
     "matplotlib>=3.10.9",
     "open-clip-torch>=3.3.0",
-    "optuna>=5.0.0",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
     "tqdm>=4.70.1",

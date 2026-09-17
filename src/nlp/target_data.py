@@ -11,6 +11,11 @@ environment's task membership is known by construction: we choose which
 tasks it draws from and in what ratio, then sample from exactly those
 tasks. weights_each_task is therefore just that ratio, directly — no
 similarity/embedding computation needed.
+
+Which environments exist, what their ratios are, and which tasks each one
+mixes all come from src/target_env.py — the vision and NLP pipelines agree on
+those. This module covers what is specific to the NLP benchmarks: turning the
+ratio into a preference vector, and drawing the examples.
 """
 
 import random
@@ -18,23 +23,6 @@ import random
 from torch.utils.data import Subset
 
 from src.task_spec import TaskSpec
-
-
-def select_target_tasks(n_tasks: int, num_to_fetch: int, seed: int) -> list[int]:
-    """Which task indices this target environment draws from (mirrors
-    vision's `task_idx_selected = random.sample(range(n_splits), ...)`)."""
-    if num_to_fetch < 0:
-        return list(range(n_tasks))
-    return random.Random(seed).sample(range(n_tasks), num_to_fetch)
-
-
-def resolve_ratio(ratio_task_to_be_fetched: list[float], num_selected: int) -> list[float]:
-    """config["ratio_task_to_be_fetched"] == [-1] means "uniform over all
-    selected tasks", matching vision's eval.py handling of the same config
-    field."""
-    if ratio_task_to_be_fetched[0] == -1:
-        return [1.0 / num_selected for _ in range(num_selected)]
-    return ratio_task_to_be_fetched
 
 
 def build_target_weights(n_tasks: int, task_idx_selected: list[int], ratio: list[float]) -> list[float]:

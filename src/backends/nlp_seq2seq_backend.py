@@ -10,28 +10,20 @@ import json
 import os
 from logging import getLogger
 
-from src.config import BASE_DIR, get_zeroshot_checkpoint
+from src.config import get_zeroshot_checkpoint
 from src.merging.registry import merge_task_vectors
 from src.merging.task_vector import TaskVector
+from src.paths import checkpoint_dir, finetuned_path
 from src.nlp.citb_superni import TASK_ORDER_PATTERNS, build_citb_task_sequence
+from src.nlp.finetune_nlp import finetune_task_sequence
 from src.nlp.modeling_nlp import build_bert2bert
 from src.nlp.trainer_nlp import seq2seq_eval_loss, train_seq2seq_task
-from src.utils import torch_load, torch_save
 
 logger = getLogger(__name__)
 
 
 def _ckpt_dir(args):
-    seq_dir = "sequential_finetuning/" if args.sequential_finetuning else ""
-    return os.path.join(
-        BASE_DIR,
-        "checkpoints",
-        args.model,
-        seq_dir,
-        "nlp_seq2seq",
-        args.dataset,
-        f"ft-pattern_{args.taskseq_pattern}-epochs-{args.epochs}-seed:{args.seed}",
-    )
+    return checkpoint_dir(args, group="nlp_seq2seq", scope=args.dataset)
 
 
 def _build_tasks(args):
@@ -40,37 +32,22 @@ def _build_tasks(args):
 
 
 def finetune(args):
-    tasks = _build_tasks(args)
-    ckpt_dir = _ckpt_dir(args)
-    os.makedirs(ckpt_dir, exist_ok=True)
-
-    zeroshot_path = get_zeroshot_checkpoint(args.model)
-    if not os.path.exists(zeroshot_path):
-        os.makedirs(os.path.dirname(zeroshot_path), exist_ok=True)
-        torch_save(build_bert2bert(args.model), zeroshot_path)
-
-    prev_ckpt = zeroshot_path
-    for idx, task in enumerate(tasks):
-        logger.info(f"\n##### TASK {idx}: {task.name} #####")
-        ft_path = os.path.join(ckpt_dir, f"finetuned_{idx}.pt")
-        if os.path.exists(ft_path):
-            logger.info(f"Skipping finetuning on task {task.name}, ckpt already exists under {ft_path}")
-            prev_ckpt = ft_path
-            continue
-
-        load_from = prev_ckpt if args.sequential_finetuning else zeroshot_path
-        model = torch_load(load_from, device=args.device)
-        train_seq2seq_task(model, task, args)
-
-        torch_save(model, ft_path)
-        prev_ckpt = ft_path
+    finetune_task_sequence(
+        args,
+        _build_tasks(args),
+        _ckpt_dir(args),
+        build_base_model=build_bert2bert,
+        train_task=train_seq2seq_task,
+        # No prepare_model: the LM head is shared across tasks, so there is
+        # nothing to swap between them.
+    )
 
 
 def merge_and_evaluate(args):
     tasks = _build_tasks(args)
     ckpt_dir = _ckpt_dir(args)
     zeroshot_path = get_zeroshot_checkpoint(args.model)
-    finetuned_paths = [os.path.join(ckpt_dir, f"finetuned_{i}.pt") for i in range(len(tasks))]
+    finetuned_paths = [finetuned_path(ckpt_dir, i) for i in range(len(tasks))]
 
     task_vectors = [TaskVector(zeroshot_path, p) for p in finetuned_paths]
     merged_tv = merge_task_vectors(args.merge_fn, task_vectors)

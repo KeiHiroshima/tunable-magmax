@@ -3,15 +3,13 @@ from logging import getLogger
 
 import torch
 
-from src.args import parse_arguments
-from src.config import get_zeroshot_checkpoint
-
 warnings.simplefilter("ignore")
 
-
-# Config
-args = parse_arguments()
-pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+# NOTE: this module deliberately has no import-time configuration. It used to
+# call parse_arguments() here to build a module-level `pretrained_checkpoint`,
+# which was never read (every method takes the checkpoint as a parameter) but
+# did mean that importing TaskVector parsed sys.argv — so any non-CLI caller,
+# tests included, had to fake an argv first.
 logger = getLogger("root")
 
 

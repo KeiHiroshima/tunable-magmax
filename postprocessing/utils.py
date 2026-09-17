@@ -24,18 +24,24 @@ CUSTOM_DIVERGENT = [
     "#d43d51",
 ]
 
-# Full ordered competitor list used for consistent color assignment across notebooks
+# Keys are `--merge_fn` values, which are also the directory names results are
+# written under (see src/merging/registry.py). They used to be the *Python
+# function* names instead — "merge_max_abs" for magmax, "sum" for average — so
+# result files produced before that change live under the old directory names
+# and need renaming (or re-running) to be picked up here.
+#
+# Order matters: build_color_mapping assigns plot colors by position, so
+# inserting or removing an entry recolors every competitor after it.
 COMPETITOR_ALL_DICT = {
     "finetune": "Baseline",
-    "select_one_task_vector": "Single task vector",
-    "merge_rnd_mix": "Random Mix",
-    "sum": "Average",
+    "random_mix": "Random Mix",
+    "average": "Average",
     "ties": "TIES-Merging",
-    "merge_max_abs": "MAGMAX",
-    "merge_max_abs_masked_with_targetdata-labels": "Tunable MAGMAX (Labels)",
-    "merge_max_abs_masked_with_targetdata-cosine_embedded": "Tunable MAGMAX (Cosine)",
-    "merge_max_abs_masked_with_targetdata-ot_embedded": "Tunable MAGMAX (OT)",
-    "merge_max_abs_masked_with_targetdata-mmd_embedded": "Tunable MAGMAX (MMD)",
+    "magmax": "MAGMAX",
+    "masked_magmax_with_targetdata-labels": "Tunable MAGMAX (Labels)",
+    "masked_magmax_with_targetdata-cosine_embedded": "Tunable MAGMAX (Cosine)",
+    "masked_magmax_with_targetdata-ot_embedded": "Tunable MAGMAX (OT)",
+    "masked_magmax_with_targetdata-mmd_embedded": "Tunable MAGMAX (MMD)",
 }
 
 # ---------------------------------------------------------------------------
@@ -71,13 +77,13 @@ def parse_competitor_key(key: str) -> tuple[str, str, str | None, str]:
     """Decompose a competitor_dict key into (merge_fn, similarity_metric, metric_name, metric_name_path).
 
     Example:
-        "merge_max_abs_masked_with_targetdata-ot_embedded"
-        -> ("merge_max_abs_masked_with_targetdata", "ot_embedded_", "ot_embedded", "ot_embedded/")
+        "masked_magmax_with_targetdata-ot_embedded"
+        -> ("masked_magmax_with_targetdata", "ot_embedded_", "ot_embedded", "ot_embedded/")
 
-        "merge_max_abs"
-        -> ("merge_max_abs", "", None, "")
+        "magmax"
+        -> ("magmax", "", None, "")
     """
-    if "merge_max_abs_masked_with_targetdata" in key:
+    if "masked_magmax_with_targetdata" in key:
         merge_fn = key.split("-")[0]
         metric_name = key.split("-")[1]
         similarity_metric = f"{metric_name}_"

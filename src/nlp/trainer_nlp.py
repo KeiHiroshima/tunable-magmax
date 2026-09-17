@@ -1,29 +1,26 @@
-"""Minimal NLP training loop, parallel to (but independent of) src/trainer.py.
+"""Minimal NLP training loop.
 
-Not reused from src/trainer.py because its batch handling is hardcoded to
-vision's single-tensor `model(images)` call convention (see
-get_batch_inputs/run_training_epoch) which doesn't fit BERT's
-(input_ids, attention_mask) signature. The optimizer/scheduler recipe
-(AdamW + cosine_lr) is kept identical to src/trainer.py for parity.
+The *loop* is separate from src/trainer.py's because vision's batch handling is
+hardcoded to a single-tensor `model(images)` call, which does not fit BERT's
+(input_ids, attention_mask) signature. The learning-rate schedule is not
+separate: both go through src.trainer.build_scheduler, so --warmup_ratio means
+the same thing on either side.
 """
 
 import torch
 
 from src.task_spec import TaskSpec
-from src.utils import cosine_lr
+from src.trainer import build_scheduler
 
 
 def _run_epochs(model, task: TaskSpec, args, compute_loss):
     model.to(args.device).train()
     total_steps = args.epochs * len(task.train_loader)
-    # args.warmup_length defaults to 500, sized for CIFAR100 splits with
-    # thousands of steps/epoch. A small LSB/CITB task can have well under
-    # 500 total steps, which would keep the cosine schedule inside its
-    # linear warmup (nearly-zero LR) for the entire run and leave the model
-    # essentially untrained. Cap warmup at 10% of this task's steps instead.
-    warmup_length = max(1, min(args.warmup_length, total_steps // 10))
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    scheduler = cosine_lr(optimizer, args.lr, warmup_length, total_steps)
+    # Shared with the vision trainer. This file used to clamp warmup to 10% of
+    # the schedule on its own, which the vision side did not do; expressing it
+    # as a ratio makes that the defined behaviour for both.
+    scheduler = build_scheduler(optimizer, args, total_steps)
     step = 0
     for _ in range(args.epochs):
         for batch in task.train_loader:

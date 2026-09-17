@@ -6,6 +6,22 @@ import torch
 from src.config import DATA_DIR, OPENCLIP_CACHE_DIR
 
 
+def warmup_ratio(value: str) -> float:
+    """--warmup_ratio must leave room for the cosine decay to actually run.
+
+    At 1.0 the whole schedule is linear warmup: the learning rate climbs to
+    --lr on the last step and never decays. Anything above that is worse — it
+    never even reaches --lr. This is the failure the previous step-count flag
+    produced silently, so it is rejected at the boundary instead.
+    """
+    ratio = float(value)
+    if not 0.0 < ratio < 1.0:
+        raise argparse.ArgumentTypeError(
+            f"--warmup_ratio must be in (0, 1), got {ratio}"
+        )
+    return ratio
+
+
 def seed_everything(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -13,7 +29,10 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def parse_arguments():
+def parse_arguments(argv=None):
+    """Parse the CLI. `argv` defaults to None, i.e. sys.argv[1:], so every
+    existing call site is unchanged; passing it explicitly lets tests exercise
+    the real parser without having to patch sys.argv."""
     parser = argparse.ArgumentParser()
 
     # DATASETS
@@ -63,9 +82,15 @@ def parse_arguments():
     parser.add_argument("--wd", type=float, default=0.1, help="Weight decay")
     parser.add_argument("--ls", type=float, default=0.0, help="Label smoothing.")
     parser.add_argument(
-        "--warmup_length",
-        type=int,
-        default=500,
+        "--warmup_ratio",
+        type=warmup_ratio,
+        default=0.1,
+        help=(
+            "Fraction of each task's schedule spent in linear warmup before the "
+            "cosine decay starts. A ratio rather than a step count because task "
+            "lengths differ by orders of magnitude, both between settings and "
+            "between tasks of one NLP benchmark."
+        ),
     )
     parser.add_argument(
         "--epochs",
@@ -80,12 +105,6 @@ def parse_arguments():
         type=lambda x: x.split(","),
         default=None,
         help="Optionally load _classifiers_, e.g. a zero shot classifier or probe or ensemble both.",
-    )
-    parser.add_argument(
-        "--save",
-        type=str,
-        default=None,
-        help="Optionally save a _classifier_, e.g. a zero shot classifier or probe.",
     )
     parser.add_argument(
         "--results_db",
@@ -116,16 +135,6 @@ def parse_arguments():
         "--split_strategy", type=str, default=None, choices=[None, "data", "class"]
     )
     parser.add_argument("--sequential-finetuning", action="store_true")
-
-    # CL METHODS
-    parser.add_argument("--lwf_lamb", type=float, default=0.0, help="LWF lambda")
-    parser.add_argument("--ewc_lamb", type=float, default=0.0, help="EWC lambda")
-    parser.add_argument(
-        "--lamb_case",
-        type=str,
-        default="ascending",
-        choices=["ascending", "constant", "decaying", "pow"],
-    )
 
     # OTHER
     parser.add_argument("--seed", default=5, type=int)
@@ -200,7 +209,6 @@ def parse_arguments():
             "cosine_embedded",
             "mmd_embedded",
             "ot_embedded",
-            "hpo",
         ],
         help="Similarity metric to use for masked_magmax_with_targetdata merging.",
     )
@@ -218,16 +226,12 @@ def parse_arguments():
         help="Configuration for target data.",
     )
 
-    parsed_args = parser.parse_args()
+    parsed_args = parser.parse_args(argv)
     parsed_args.device = (
         f"cuda:{parsed_args.gpu_id}" if torch.cuda.is_available() else "cpu"
     )
 
     seed_everything(parsed_args.seed)
-
-    assert parsed_args.lwf_lamb == 0.0 or parsed_args.ewc_lamb == 0.0, (
-        "Lambda for LWF and EWC are mutually exclusive"
-    )
 
     if parsed_args.load is not None and len(parsed_args.load) == 1:
         parsed_args.load = parsed_args.load[0]

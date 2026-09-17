@@ -1,6 +1,10 @@
 #!/bin/env/bash
 
 set -e
+# Without pipefail the `|& tee` below reports tee's status, so a failed
+# fine-tuning run looks like a success and the merge step goes ahead
+# against checkpoints that were never written.
+set -o pipefail
 
 
 model=ViT-B-16
@@ -11,7 +15,7 @@ task_seq=A        # A B C
 seed=3            # 3 4 5
 gpu_id=0
 num_train_data_each_task=500
-merge_fn=masked_magmax_with_targetdata  # masked_magmax_with_targetdata finetune magmax ties average random_mix select_one_task_vector
+merge_fn=masked_magmax_with_targetdata  # masked_magmax_with_targetdata finetune magmax ties average random_mix
 ft_dir_name=finetune_target_data
 
 merge_dir_name=DEFAULT_NAME

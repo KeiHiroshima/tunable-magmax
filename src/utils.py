@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import zlib
 from logging import config, getLogger
 
 import numpy as np
@@ -145,18 +146,28 @@ def do_eval(model, dl, device, flag_data_parallel=False):
         correct += pred.eq(y.view_as(pred)).sum().item()
         n += y.size(0)
 
-    metrics = {"top1": correct / n}
+    # `correct`/`n` come back alongside the ratio so a caller evaluating several
+    # datasets can micro-average them — sum the counts — instead of running the
+    # whole evaluation a second time to get the totals.
+    metrics = {"top1": float(correct / n), "correct": int(correct), "n": int(n)}
 
     # clean up GPU memory
     del x, y, logits, pred
     torch.cuda.empty_cache()
-
-    # convert to float
-    for key in metrics:
-        metrics[key] = float(metrics[key])
 
     return metrics
 
 
 def is_freezed_parameter(task_vectors):
     return all(torch.all(tv == 0) for tv in task_vectors)
+
+
+def derive_seed(*parts) -> int:
+    """A stable integer seed built from `parts`.
+
+    Uses crc32 rather than hash(): Python randomises string hashing per
+    process, so hash() would give a different seed on every run and defeat the
+    point. crc32 gives the same number on every run and machine.
+    """
+    payload = "|".join(str(part) for part in parts).encode()
+    return zlib.crc32(payload)

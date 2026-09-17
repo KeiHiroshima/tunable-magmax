@@ -19,11 +19,29 @@ def setup_model_for_training(image_encoder, classification_head, args, freeze_la
     return model
 
 
+def build_scheduler(optimizer, args, total_steps):
+    """Cosine schedule, preceded by a warmup of --warmup_ratio of the schedule.
+
+    The only place either pipeline decides how long to warm up for.
+
+    Warmup is expressed as a fraction rather than a step count because task
+    lengths vary by orders of magnitude — 40 steps for ImageNet-R-50 against
+    790 for CIFAR-100-5, and within a single LSB run from 80 steps for `cb` to
+    203,000 for `yelp`. A step count fit for one of those covers another's
+    entire schedule, which leaves the learning rate ramping linearly from zero
+    and never reaching --lr, let alone decaying. A fraction below 1 cannot do
+    that whatever the task size, and rescales by itself when --epochs or
+    --batch_size change.
+    """
+    warmup_steps = max(1, int(args.warmup_ratio * total_steps))
+    return cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
+
+
 def build_optimizer_and_scheduler(model, args, num_batches):
     """Return (AdamW optimizer, cosine scheduler) for all trainable parameters."""
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.wd)
-    scheduler = cosine_lr(optimizer, args.lr, args.warmup_length, args.epochs * num_batches)
+    scheduler = build_scheduler(optimizer, args, args.epochs * num_batches)
     return optimizer, scheduler
 
 

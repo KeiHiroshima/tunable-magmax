@@ -5,7 +5,7 @@ from logging import getLogger
 from pathlib import Path
 
 import torch
-from src.args import parse_arguments
+
 from src.config import get_zeroshot_checkpoint
 from src.datasets.common import get_task_classes
 from src.datasets.registry import get_dataset
@@ -15,19 +15,20 @@ from src.merging.similarity import (
     compute_mmd_similarity,
     compute_otdd_similarity,
     count_labels,
-    run_optmization,
 )
 from src.merging.task_vector import TaskVector
 from src.merging.ties import merge_methods, state_dict_to_vector, vector_to_state_dict
-from src.modeling import ImageClassifier, ImageEncoder
-from src.utils import do_eval, is_freezed_parameter
+from src.modeling import ImageEncoder
+from src.utils import derive_seed, is_freezed_parameter
 
 warnings.simplefilter("ignore")
 
 
-# Config
-args = parse_arguments()
-pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+# NOTE: no import-time configuration here on purpose. `pretrained_checkpoint`
+# used to be a module-level global derived from parse_arguments(), which made
+# importing any merge function parse sys.argv. The two functions that need it
+# now take it as a parameter (defaulting to the same value derived from the
+# args they were already given), so the dependency is visible at the call site.
 logger = getLogger("root")
 
 
@@ -79,7 +80,7 @@ def merge_max_abs(task_vectors):
     return TaskVector(vector=new_vector)
 
 
-def mask_and_merge_by_weights(task_vectors, weights_each_task):
+def mask_and_merge_by_weights(task_vectors, weights_each_task, *, seed):
     """Masked MAGMAX merge given a fixed per-task weight vector (summing to 1).
 
     Extracted from merge_max_abs_masked_with_targetdata's tail: this half of
@@ -89,7 +90,19 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task):
     Pulled out so a non-vision caller can supply weights_each_task some other
     way (e.g. directly from a target environment's known task distribution)
     without duplicating this ~200-line tensor-masking routine.
+
+    `seed` fixes the tie-breaking draws below — which elements a task gives up
+    when it wins more than its budget, and where the leftovers go (Algorithm 1
+    lines 6 and 12). They used to come from the process-wide RNGs, which made
+    the merged model depend on how much randomness had already been consumed:
+    merging for the fifth target environment gave one model in a full run and
+    a different one in a run that resumed after four finished targets. Callers
+    pass a seed derived from the run seed and the target environment, so a
+    given (run, target) always merges to the same model.
     """
+    generator = torch.Generator().manual_seed(seed)
+    rng = random.Random(seed)
+
     with torch.no_grad():
         new_vector = {}
         num_unaligned_accum_dict = {
@@ -152,7 +165,7 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task):
 
                         # Randomly choose which ones to drop
                         num_to_drop = num_won - elements_per_task
-                        perm = torch.randperm(won_indices.numel())
+                        perm = torch.randperm(won_indices.numel(), generator=generator)
                         drop_indices_local = perm[:num_to_drop]
                         indices_to_drop = won_indices[drop_indices_local]
 
@@ -180,7 +193,7 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task):
 
                         # Randomly choose which ones to drop
                         num_to_drop = num_won - elements_per_task
-                        perm = torch.randperm(won_indices.numel())
+                        perm = torch.randperm(won_indices.numel(), generator=generator)
                         drop_indices_local = perm[:num_to_drop]
                         indices_to_drop = won_indices[drop_indices_local]
 
@@ -225,7 +238,7 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task):
                                 )
 
                                 if len(candidates_indices) > num_needed:
-                                    perm_ = torch.randperm(len(candidates_indices))
+                                    perm_ = torch.randperm(len(candidates_indices), generator=generator)
                                     selected_indices = candidates_indices[
                                         perm_[:num_needed]
                                     ].tolist()
@@ -270,8 +283,11 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task):
                                 num_unaligned_accum_dict[f"task_{j + 2}"] += (
                                     num_needed - num_aligned
                                 )  # for logging
-                                selected_indices_random = random.sample(
-                                    list(indices_unselected),
+                                # sorted(), not list(): indices_unselected is
+                                # a set, so its iteration order is a hash-table
+                                # detail rather than something this code fixes.
+                                selected_indices_random = rng.sample(
+                                    sorted(indices_unselected),
                                     k=num_needed - num_aligned,
                                 )
 
@@ -328,7 +344,13 @@ def merge_max_abs_masked_with_targetdata(
     target_data,
     similarity_metric="cosine",
     args=None,
+    pretrained_checkpoint=None,
 ):
+    # Was a module-level global; derived from the same args as before, so the
+    # value is unchanged for every existing caller.
+    if pretrained_checkpoint is None:
+        pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+
     # calculate similarity scores between train_data and target_data
     similarity_score_list = [None for _ in range(len(train_subset_each_task))]
     distance_metric = {
@@ -336,7 +358,6 @@ def merge_max_abs_masked_with_targetdata(
         "cosine": compute_cosine_similarity,
         "mmd": compute_mmd_similarity,
         "ot": compute_otdd_similarity,
-        "hpo": run_optmization,
     }
     similarity_metric_key = (
         similarity_metric.split("_")[0]
@@ -344,59 +365,52 @@ def merge_max_abs_masked_with_targetdata(
         else similarity_metric
     )
 
-    if similarity_metric == "hpo":
-        similarity_score_list = distance_metric[similarity_metric_key](
-            task_vectors=task_vectors,
-            target_dataset_meta=target_data,
-            args=args,
-        )
-    else:
+    if similarity_metric == "labels":
+        preprocess_fn = ImageEncoder(args, keep_lang=True).train_preprocess
+        class_order = get_dataset(
+            args.dataset,
+            preprocess_fn,
+            location=args.data_location,
+            batch_size=args.batch_size,
+            args_=args,
+        ).default_class_order
+        task_class_dict = {
+            i: get_task_classes(class_order, args.n_splits, i)
+            for i in range(args.n_splits)
+        }
+
+    for i, train_subset_onetask in enumerate(train_subset_each_task):
         if similarity_metric == "labels":
-            preprocess_fn = ImageEncoder(args, keep_lang=True).train_preprocess
-            class_order = get_dataset(
-                args.dataset,
-                preprocess_fn,
-                location=args.data_location,
-                batch_size=args.batch_size,
-                args_=args,
-            ).default_class_order
-            task_class_dict = {
-                i: get_task_classes(class_order, args.n_splits, i)
-                for i in range(args.n_splits)
-            }
-
-        for i, train_subset_onetask in enumerate(train_subset_each_task):
-            if similarity_metric == "labels":
-                similarity_score = distance_metric[similarity_metric_key](
-                    target_data, task_class_dict=task_class_dict, task_idx=i
+            similarity_score = distance_metric[similarity_metric_key](
+                target_data, task_class_dict=task_class_dict, task_idx=i
+            )
+        else:
+            if "embedded" in similarity_metric:
+                logger.debug(
+                    f"Using {similarity_metric_key} similarity with embedded data."
                 )
-            else:
-                if "embedded" in similarity_metric:
-                    logger.debug(
-                        f"Using {similarity_metric_key} similarity with embedded data."
-                    )
-                    encoder = task_vectors[i].apply_to(
-                        pretrained_checkpoint, scaling_coef=1.0
-                    )
-                    feature_cost = FeatureCost(
-                        src_embedding=encoder,
-                        tgt_embedding=encoder,
-                        device=args.device,
-                    )
-                else:
-                    logger.debug(
-                        f"Using {similarity_metric_key} similarity with raw data."
-                    )
-                    feature_cost = None
-
-                similarity_score = distance_metric[similarity_metric_key](
-                    train_subset_onetask,
-                    target_data,
-                    feature_cost=feature_cost,
+                encoder = task_vectors[i].apply_to(
+                    pretrained_checkpoint, scaling_coef=1.0
+                )
+                feature_cost = FeatureCost(
+                    src_embedding=encoder,
+                    tgt_embedding=encoder,
                     device=args.device,
                 )
+            else:
+                logger.debug(
+                    f"Using {similarity_metric_key} similarity with raw data."
+                )
+                feature_cost = None
 
-            similarity_score_list[i] = similarity_score
+            similarity_score = distance_metric[similarity_metric_key](
+                train_subset_onetask,
+                target_data,
+                feature_cost=feature_cost,
+                device=args.device,
+            )
+
+        similarity_score_list[i] = similarity_score
 
     # calculate weights based on similarity scores
     total_score = sum(similarity_score_list)
@@ -410,24 +424,26 @@ def merge_max_abs_masked_with_targetdata(
     logger.debug(f"similarity_score_list: {similarity_score_list}")
     logger.debug(f"weights_each_task: {weights_each_task}")
 
-    # masked MAGMAX merging with calculated number of elements per task vector
+    # masked MAGMAX merging with calculated number of elements per task vector.
+    # The seed combines the run and the target environment, so this merge is
+    # reproducible and independent of how many targets were merged before it.
     merged_tv, num_unaligned_accum_dict, num_params_all = mask_and_merge_by_weights(
-        task_vectors, weights_each_task
+        task_vectors, weights_each_task, seed=derive_seed(args.seed, args.target_id)
     )
     new_vector = merged_tv.vector
 
     logger.info(f"num_unaligned_accum_dict: {num_unaligned_accum_dict}")
 
     if args.results_db:
-        log_dir = (
-            Path(args.results_db)
-            / "merge_max_abs_masked_with_targetdata"
-            / args.similarity_metric
-        )
+        # Same file src/eval.py writes this environment's accuracies to — it is
+        # written first, here, and eval.py merges its own fields in afterwards.
+        # Both sides therefore have to spell the path identically: results live
+        # under the --merge_fn value, not under the name of this function.
+        log_dir = Path(args.results_db) / args.merge_fn / args.similarity_metric
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = (
             log_dir
-            / f"merge_max_abs_masked_with_targetdata_lambda{args.coeff}_{similarity_metric}_target{args.target_id}_seed{args.seed}.json"
+            / f"{args.merge_fn}_lambda{args.coeff}_{similarity_metric}_target{args.target_id}_seed{args.seed}.json"
         )
         existing = json.loads(log_path.read_text()) if log_path.exists() else {}
         existing["num_unaligned"] = num_unaligned_accum_dict
@@ -466,51 +482,3 @@ def ties(task_vectors):
     )
 
     return TaskVector(vector=merged_tv)
-
-
-def select_one_task_vector(
-    classification_head,
-    task_vectors: list[TaskVector],
-    target_data: torch.utils.data.Dataset,
-    device: torch.device,
-    model_name=None,
-):
-    if model_name == "ViT-L-14":
-        flag_data_parallel = True
-        device = list(range(torch.cuda.device_count()))
-        print("Using devices", device)
-    else:
-        flag_data_parallel = False
-
-    selected_tv, task_idx_selected, acc_champ = task_vectors[0], -1, 0.0
-
-    dataloader_target = torch.utils.data.DataLoader(
-        target_data, batch_size=128, shuffle=False, num_workers=4
-    )
-    with torch.no_grad():
-        for i, tv in enumerate(task_vectors):
-            image_encoder = tv.apply_to(pretrained_checkpoint, scaling_coef=1.0)
-            model = ImageClassifier(image_encoder, classification_head)
-
-            if flag_data_parallel:
-                model = torch.nn.DataParallel(model, device_ids=device)
-
-            acc = do_eval(
-                model, dataloader_target, device, flag_data_parallel=flag_data_parallel
-            )["top1"]
-            logger.debug(f"Task vector {i}: accuracy on target data: {acc:.4f}")
-
-            if acc > acc_champ:
-                logger.debug(
-                    f"Task vector {i} takes the lead with accuracy: {acc:.4f} (previous best: {acc_champ:.4f})"
-                )
-                selected_tv = tv
-                task_idx_selected = i
-                acc_champ = acc
-
-    return selected_tv, task_idx_selected
-
-
-def finetune():
-    logger.debug("Finetune only mode selected.")
-    pass

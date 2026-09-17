@@ -3,25 +3,14 @@ works unmodified on BERT state dicts. This is the key claim behind reusing
 it as-is for NLP instead of writing a parallel merging implementation.
 """
 
-import sys
-
 import torch
 
+from src.merging.task_vector import TaskVector
 from src.nlp.modeling_nlp import BertClassifier
 from src.utils import torch_load, torch_save
 
 
-def _set_fake_cli_args(monkeypatch):
-    # src/merging/task_vector.py calls parse_arguments() at *import* time, so
-    # it needs sys.argv to look like a real invocation even though this test
-    # never touches the parsed args themselves.
-    monkeypatch.setattr(sys, "argv", ["test", "--model", "bert-base-uncased", "--dataset", "dummy"])
-
-
-def test_task_vector_roundtrip_on_bert_classifier(tmp_path, monkeypatch):
-    _set_fake_cli_args(monkeypatch)
-    from src.merging.task_vector import TaskVector
-
+def test_task_vector_roundtrip_on_bert_classifier(tmp_path):
     base_path = tmp_path / "base.pt"
     finetuned_path = tmp_path / "finetuned.pt"
 
@@ -45,14 +34,12 @@ def test_task_vector_roundtrip_on_bert_classifier(tmp_path, monkeypatch):
     assert torch.allclose(merged.state_dict()[key], finetuned.state_dict()[key], atol=1e-6)
 
 
-def test_mask_and_merge_by_weights_on_bert_task_vectors(tmp_path, monkeypatch):
+def test_mask_and_merge_by_weights_on_bert_task_vectors(tmp_path):
     """mask_and_merge_by_weights (extracted from
     merge_max_abs_masked_with_targetdata for src/backends/
     nlp_classification_backend.py's masked_magmax_with_targetdata path) runs
     on plain BERT task vectors. weights=[1.0, 0.0] is a checkable edge case:
     every element should come from task A, none from task B."""
-    _set_fake_cli_args(monkeypatch)
-    from src.merging.task_vector import TaskVector
     from src.merging.task_vectors import mask_and_merge_by_weights
 
     base_path = tmp_path / "base.pt"
@@ -73,7 +60,7 @@ def test_mask_and_merge_by_weights_on_bert_task_vectors(tmp_path, monkeypatch):
     task_vectors = [TaskVector(str(base_path), p) for p in finetuned_paths]
 
     merged_tv, num_unaligned, num_params_all = mask_and_merge_by_weights(
-        task_vectors, weights_each_task=[1.0, 0.0]
+        task_vectors, weights_each_task=[1.0, 0.0], seed=0
     )
 
     key = "encoder.embeddings.word_embeddings.weight"

@@ -1,6 +1,10 @@
 #!/bin/env/bash
 
 set -e
+# Without pipefail the `|& tee` below reports tee's status, so a failed
+# fine-tuning run looks like a success and the merge step goes ahead
+# against checkpoints that were never written.
+set -o pipefail
 
 
 model=ViT-B-16

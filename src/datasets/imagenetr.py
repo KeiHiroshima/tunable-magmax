@@ -1,20 +1,15 @@
 import hashlib
 import json
-import logging
 import os
 import os.path
-import random
 from logging import getLogger
 from shutil import move, rmtree
 
-import numpy as np
 import torch
-from torch.utils.data import Subset
 from torchvision import datasets
 from torchvision.datasets import ImageFolder
 from torchvision.datasets.utils import download_url
 
-from src.datasets.common import get_subset_indices_with_classes, get_task_classes
 
 logger = getLogger(__name__)
 
@@ -644,142 +639,3 @@ class ImageNetR:
         self.default_class_order = self.class_order_dict[
             args.taskseq_pattern if args else "A"
         ]
-
-    def _construct_train_subset_each_task(
-        self,
-        n_splits: int,
-        num_train_data_each_task: int,
-        seed: int = 42,
-    ):
-        """
-        Constructs a list of subsets of the ImageNet-R train dataset, one for each task.
-        """
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-
-        train_subsets = []
-        for split_idx in range(n_splits):
-            task_classes = get_task_classes(
-                self.default_class_order, n_splits, split_idx
-            )
-            # a bit confusing, but self.train_dataset is ImageFolder, which doesn't have targets
-            # but its parent class, DatasetFolder, does. And it's populated.
-            task_indices = get_subset_indices_with_classes(
-                self.train_dataset, task_classes
-            )
-
-            num_train_data_each_task = min(len(task_indices), num_train_data_each_task)
-            sampled_task_indices = np.random.choice(
-                task_indices, num_train_data_each_task, replace=False
-            )
-            train_subsets.append(Subset(self.train_dataset, sampled_task_indices))
-
-        return train_subsets
-
-    def _construct_target_imagenetr_dataset(
-        self,
-        num_data: int,
-        n_splits: int,
-        num_data_from_tasks: list = None,
-        ratio_data_from_task: list = None,
-        seed: int = 42,
-    ):
-        """
-        Constructs a subset of the ImageNet-R test dataset by sampling from each task.
-        """
-        np.random.seed(seed)
-
-        # Determine the number of samples to draw from each task
-        if num_data_from_tasks is not None:
-            if len(num_data_from_tasks) != n_splits:
-                raise ValueError("Length of num_data_from_tasks must match n_splits.")
-            if sum(num_data_from_tasks) != num_data:
-                logging.warning(
-                    f"Sum of num_data_from_tasks ({sum(num_data_from_tasks)}) does not equal num_data ({num_data})."
-                )
-            samples_per_task = num_data_from_tasks
-
-        elif ratio_data_from_task is not None:
-            # assign num task ramdomly
-            num_data_each_task = [0] * n_splits
-            task_idx_selected = random.sample(
-                range(n_splits), len(ratio_data_from_task)
-            )
-            num_data_to_be_selected = (
-                np.floor(np.array(ratio_data_from_task) * num_data).astype(int).tolist()
-            )
-            # adjust last element to match total num_data
-
-            remainder = num_data - sum(num_data_to_be_selected)
-            for _ in range(remainder):
-                num_data_to_be_selected[
-                    np.random.randint(0, len(num_data_to_be_selected))
-                ] += 1
-
-            num_data_to_be_selected_shuffled = np.random.permutation(
-                num_data_to_be_selected
-            )
-
-            for i, task_idx in enumerate(task_idx_selected):
-                num_data_each_task[task_idx] = num_data_to_be_selected_shuffled[i]
-
-            logger.info(
-                f"task_idx_selected: {task_idx_selected}, num_data_each_task: {num_data_each_task}"
-            )
-            logger.debug(f"sum: {sum(num_data_each_task)}, num_data: {num_data}")
-
-        else:
-            # uniform distribution
-            num_data_each_task = [num_data // n_splits] * n_splits
-            remainder = num_data % n_splits
-            for i in range(remainder):
-                num_data_each_task[np.random.randint(0, n_splits)] += 1
-
-        meta_data_indices = []
-        test_data_list = []
-        for split_idx, num_samples in zip(range(n_splits), num_data_each_task):
-            if num_samples == 0:
-                test_data_list.append(None)
-                continue
-            else:
-                task_classes = get_task_classes(
-                    self.default_class_order, n_splits, split_idx
-                )
-                task_indices = get_subset_indices_with_classes(
-                    self.test_dataset, task_classes
-                )
-
-                num_samples = min(len(task_indices), num_samples)
-                """if len(task_indices) < num_samples:
-                    raise ValueError(
-                        f"Task {split_idx} (classes {task_classes}) has only {len(task_indices)} test samples, "
-                        f"but {num_samples} were requested."
-                    )"""
-
-                sampled_task_indices = np.random.choice(
-                    task_indices, num_samples, replace=False
-                )
-
-                num_meta = int(0.1 * len(sampled_task_indices))
-
-                meta_data_indices.extend(sampled_task_indices[:num_meta])
-                test_data_list.append(
-                    Subset(self.test_dataset, sampled_task_indices[num_meta:])
-                )
-
-                logging.debug(
-                    f"Task {split_idx} selected {num_samples} samples from classes {len(task_classes)}\\nmeta data size: {num_meta}, test data size: {num_samples - num_meta}."
-                )
-
-        np.random.shuffle(meta_data_indices)
-        meta_data = Subset(self.test_dataset, meta_data_indices)
-
-        # update num_data_each_task
-        num_data_each_task = [len(td) if td is not None else 0 for td in test_data_list]
-
-        return (
-            task_idx_selected,
-            num_data_each_task,
-            meta_data,
-            test_data_list,
-        )
