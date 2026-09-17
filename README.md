@@ -249,27 +249,6 @@ than accuracy, and support the baselines only.
 `TASK_ORDER_PATTERNS` in `src/nlp/long_sequence_benchmark.py` /
 `src/nlp/citb_superni.py`.
 
-
-## Removed options
-
-These were dropped because nothing in the repository implemented them, or the
-paper's experiments never used them. They now fail at argument parsing rather
-than being silently ignored:
-
-| Removed | Replacement / reason |
-|---|---|
-| `--warmup_length` | `--warmup_ratio` — a step count cannot suit schedules that differ by orders of magnitude |
-| `--save` | was overwritten before being read; checkpoint paths come from `src/paths.py` |
-| `--lwf_lamb`, `--ewc_lamb`, `--lamb_case` | no LwF/EWC training code existed, and neither appears in the paper |
-| `--merge_fn select_one_task_vector` | in no table or figure of the paper |
-| `--similarity_metric hpo` | mentioned in the paper as an unevaluated alternative; never run |
-
-Result directories are now named by the `--merge_fn` value (`magmax/`,
-`average/`) rather than by the underlying Python function (`merge_max_abs/`,
-`sum/`). **Results produced before that change are not picked up** by
-`postprocessing/`; rename their directories or re-run.
-
-
 ## Tests
 
 ```bash
