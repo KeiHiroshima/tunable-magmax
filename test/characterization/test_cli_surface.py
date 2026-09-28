@@ -1,4 +1,4 @@
-"""Pins the command-line interface that scripts/*.sh depend on.
+"""Pins the command-line interface that scripts/**/*.sh depend on.
 
 The shell scripts are the project's real entry points, so every flag they pass
 has to keep parsing. These tests reproduce the exact argv the scripts build
@@ -29,7 +29,7 @@ FINETUNE_ARGV = [
     "--taskseq_pattern", "A",
 ]
 
-# scripts/merge.sh, masked_magmax_with_targetdata branch (n_splits=5).
+# scripts/vision/merge.sh, masked_magmax_with_targetdata branch (n_splits=5).
 MERGE_ARGV = [
     "merge_for_targetdata.py",
     "--model", "ViT-B-16",
@@ -46,6 +46,32 @@ MERGE_ARGV = [
     "--num_target_data", "1000",
     "--seed", "3",
     "--gpu_id", "0",
+]
+
+# scripts/nlp/finetune.sh with its committed defaults.
+NLP_FINETUNE_ARGV = [
+    "finetune_splitted.py",
+    "--model", "bert-base-uncased",
+    "--dataset", "LSB",
+    "--epochs", "3",
+    "--sequential-finetuning",
+    "--seed", "3",
+    "--taskseq_pattern", "A",
+]
+
+# scripts/nlp/merge.sh with its committed defaults.
+NLP_MERGE_ARGV = [
+    "merge_for_targetdata.py",
+    "--model", "bert-base-uncased",
+    "--dataset", "LSB",
+    "--epochs", "3",
+    "--sequential-finetuning",
+    "--taskseq_pattern", "A",
+    "--seed", "3",
+    "--gpu_id", "0",
+    "--merge_fn", "masked_magmax_with_targetdata",
+    "--target_config", "target_data_config_lsb",
+    "--num_target_data", "200",
 ]
 
 
@@ -74,6 +100,25 @@ def test_merge_script_argv_parses():
     assert args.similarity_metric == "labels"
     assert args.num_train_data_each_task == 500
     assert args.num_target_data == 1000
+    assert args.gpu_id == 0
+
+
+def test_nlp_finetune_script_argv_parses():
+    args = _parse(NLP_FINETUNE_ARGV)
+
+    assert args.model == "bert-base-uncased"
+    assert args.dataset == "LSB"
+    assert args.sequential_finetuning is True
+    assert args.taskseq_pattern == "A"
+    assert args.seed == 3
+
+
+def test_nlp_merge_script_argv_parses():
+    args = _parse(NLP_MERGE_ARGV)
+
+    assert args.merge_fn == "masked_magmax_with_targetdata"
+    assert args.target_config == "target_data_config_lsb"
+    assert args.num_target_data == 200
     assert args.gpu_id == 0
 
 
@@ -209,8 +254,8 @@ def test_vision_finetune_no_longer_discards_these_flags(flag, value, monkeypatch
 def test_no_script_uses_a_flag_the_tests_do_not_cover():
     """Closes the loop: if a shell script grows a new flag, this fails until
     the argv fixtures above are updated to match."""
-    covered = set(FINETUNE_ARGV) | set(MERGE_ARGV)
+    covered = set(FINETUNE_ARGV) | set(MERGE_ARGV) | set(NLP_FINETUNE_ARGV) | set(NLP_MERGE_ARGV)
 
-    for script in sorted(SCRIPTS_DIR.glob("*.sh")):
+    for script in sorted(SCRIPTS_DIR.glob("**/*.sh")):
         flags = set(re.findall(r"(?<![\w-])--[a-z][a-z0-9_-]*", script.read_text()))
         assert flags <= covered, f"{script.name} uses uncovered flags: {sorted(flags - covered)}"

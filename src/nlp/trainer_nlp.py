@@ -70,11 +70,6 @@ def classification_correct_and_total(model, eval_loader, device) -> tuple[int, i
     return correct, total
 
 
-def classification_accuracy(model, eval_loader, device) -> float:
-    correct, total = classification_correct_and_total(model, eval_loader, device)
-    return correct / total
-
-
 @torch.no_grad()
 def seq2seq_eval_loss(model, eval_loader, device) -> float:
     model.eval()

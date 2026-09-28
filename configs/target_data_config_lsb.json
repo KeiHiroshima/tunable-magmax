@@ -35,7 +35,7 @@
     },
     {
       "num_task_to_be_fetched": 3,
-      "ratio_task_to_be_fetched": [0.6, 0.2, 0.2],
+      "ratio_task_to_be_fetched": [0.4, 0.4, 0.2],
       "variants": [
         {"target_id": 16, "random_seed": 42},
         {"target_id": 17, "random_seed": 123},
@@ -46,7 +46,7 @@
     },
     {
       "num_task_to_be_fetched": 3,
-      "ratio_task_to_be_fetched": [0.4, 0.4, 0.2],
+      "ratio_task_to_be_fetched": [0.6, 0.2, 0.2],
       "variants": [
         {"target_id": 21, "random_seed": 42},
         {"target_id": 22, "random_seed": 123},

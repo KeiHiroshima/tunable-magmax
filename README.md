@@ -48,6 +48,39 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
 | `LSB` | `nlp_classification_backend.py` | BERT + per-task head |
 | `CITB19`, `CITB38` | `nlp_seq2seq_backend.py` | BERT2BERT |
 
+### Implementation flow
+
+**Vision (`vision_backend.py`)**
+1. `finetune(args)` → `_run_sequential_finetuning`: fine-tunes a CLIP ViT
+   class-incrementally, one `finetuned_{i}.pt` checkpoint per split.
+2. `merge_and_evaluate(args)` → `src/eval.py::evaluate_merged_fts_on_target_data`,
+   the one loop every `--merge_fn` goes through: for each target environment in
+   `--target_config`, builds the mixed test set (`src/datasets/common.py::construct_target_dataset`,
+   which also carves off a 10% meta split) and merges according to
+   `MergeSpec.needs_target_data` (`src/merging/registry.py`) — baselines merge
+   once via `apply_merge`; `masked_magmax_with_targetdata` estimates a
+   preference vector from the meta split (`src/merging/similarity.py`,
+   `--similarity_metric`) and merges via `mask_and_merge_by_weights`
+   (`src/merging/task_vectors.py`).
+
+**NLP classification (`nlp_classification_backend.py`, `LSB`)**
+1. `finetune(args)` → `src/nlp/finetune_nlp.py::finetune_task_sequence`: the
+   same fine-tuning loop as vision (skip-if-exists, chain from the previous
+   task under `--sequential-finetuning`), driving a shared `BertClassifier`
+   with a fresh head per task instead of a CLIP ViT.
+2. `merge_and_evaluate(args)` mirrors vision's `evaluate_merged_fts_on_target_data`
+   step for step — same `--target_config` loop, same `MergeSpec.needs_target_data`
+   branch, every `--merge_fn` scored against every target environment — but
+   needs no meta split or similarity estimate: LSB's tasks are already
+   separate datasets, so `masked_magmax_with_targetdata`'s preference vector
+   *is* the target environment's own known mixing ratio
+   (`src/nlp/target_data.py::build_target_weights`).
+
+**NLP seq2seq (`nlp_seq2seq_backend.py`, `CITB19`/`CITB38`)**
+Same fine-tuning loop, but `merge_and_evaluate` supports the baselines only
+(a plain `merge_task_vectors` call) and reports generation loss per task —
+no target-environment loop, no proposed method.
+
 ### Step 0: Configure paths
 
 ```bash
@@ -61,7 +94,7 @@ backends, which stream from the Hugging Face Hub (cached under `HF_HOME`).
 ### Step 1: Fine-tuning
 
 ```bash
-bash scripts/finetune.sh                 # edit the variables at the top first
+bash scripts/vision/finetune.sh          # edit the variables at the top first
 ```
 
 Or directly:
@@ -79,14 +112,14 @@ A run that is interrupted can be resumed by re-issuing the same command:
 checkpoints that already exist are skipped, and the next task still continues
 from the one before it.
 
-> **The `scripts/*.sh` wrappers call bare `python`.** Activate the environment
+> **The `scripts/**/*.sh` wrappers call bare `python`.** Activate the environment
 > first (`source .venv/bin/activate`, or `conda activate magmax`) — `uv run bash
 > scripts/...` does not put the virtualenv on `PATH` for the inner call.
 
 ### Step 2: Merging and evaluation
 
 ```bash
-bash scripts/merge.sh
+bash scripts/vision/merge.sh
 ```
 
 Or directly:
@@ -113,7 +146,8 @@ uv run python merge_for_targetdata.py \
 | `random_mix` | Rand Mix | yes |
 | `finetune` | Baseline: keep the last task's model, no merging | yes |
 
-`--similarity_metric` applies to `masked_magmax_with_targetdata` only and picks
+`--similarity_metric` applies to vision's `masked_magmax_with_targetdata` only
+(NLP's preference vector needs no estimate — see "NLP tasks" below) and picks
 how the preference vector is estimated: `labels` (label-distribution
 similarity), or `ot_embedded` / `cosine_embedded` / `mmd_embedded` (feature-space
 distances). The raw `cosine` / `mmd` / `ot` variants skip the encoder and
@@ -144,35 +178,50 @@ draws of that kind, each identified by `target_id` and sampled with its own
 | `target_data_config_smoke` | 3 environments, for a quick end-to-end check |
 
 `--num_target_data` sets how many examples an environment holds (the
-`split{N}` configs carry their own sizes and override it). 10% of each task's
-draw is held out as the meta dataset the preference vector is estimated from.
+`split{N}` configs carry their own sizes and override it).
+
+**Vision only** additionally holds out 10% of each task's draw as a meta
+dataset, which `masked_magmax_with_targetdata` uses to estimate the
+preference vector (`src/datasets/common.py::construct_target_dataset`);
+baselines build it too but ignore it. **NLP needs no meta split** — see
+"NLP tasks" below.
 
 ### Where results go
 
-**Vision** writes one JSON per target environment under `--results_db`:
+**Vision** writes one JSON per target environment under `--results_db`, for
+every `--merge_fn`:
 
 ```
 ${results_db}/{merge_fn}/[{similarity_metric}/]{merge_fn}_lambda0.5_[{metric}_]target{id}_seed{s}.json
 ```
 
-It holds `overall_accuracy` (micro-averaged over examples), `average_accuracy`
-(mean over tasks), `taskwise_accuracies`, the preference vector, the target
-environment's composition, and — for the proposed method — `num_unaligned` /
+Every method's file holds `overall_accuracy` (micro-averaged over examples),
+`average_accuracy` (mean over tasks), `taskwise_accuracies`, and a
+`target_dataset_info` block with the target environment's composition
+(`target_id`, `ratio_task_to_be_fetched`, `task_idx_selected`,
+`num_data_each_task`, ...). Only `masked_magmax_with_targetdata`'s file also
+holds `similarity_metric`, `weights_each_task` (the preference vector), and
+`num_unaligned` / `num_params_all`.
+
+**NLP ignores `--results_db`** and writes into the checkpoint directory instead,
+one JSON per target environment for every `--merge_fn` (baselines included —
+see below):
+
+```
+.../ft-pattern_{p}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
+```
+
+Every method's file holds `overall_accuracy`, `taskwise_accuracies`,
+`ratio_task_to_be_fetched`, `task_idx_selected`, and `num_data_each_task` at
+the top level — a flatter shape than vision's, with no `average_accuracy` or
+nested `target_dataset_info`. Only `masked_magmax_with_targetdata`'s file also
+holds `weights_each_task` (the preference vector) and `num_unaligned` /
 `num_params_all`.
-
-**NLP ignores `--results_db`** and writes into the checkpoint directory instead:
-
-```
-.../ft-pattern_{p}-epochs-{e}-seed:{s}/
-├── merge_{merge_fn}_results.json              # baselines: per-task accuracy only
-└── masked_magmax_with_targetdata/
-    └── target{id}_seed{s}.json                # proposed: full record per environment
-```
 
 ### Combined run
 
 ```bash
-bash scripts/finetune_merge.sh
+bash scripts/vision/finetune_merge.sh
 ```
 
 ### Key arguments
@@ -226,6 +275,15 @@ more is exactly the broken schedule described above.
 | `CITB38` | CITB InstrDialog++ — 38 tasks | BERT2BERT | not yet |
 
 ```bash
+bash scripts/nlp/finetune.sh             # edit the variables at the top first
+bash scripts/nlp/merge.sh
+# or, combined:
+bash scripts/nlp/finetune_merge.sh
+```
+
+Or directly:
+
+```bash
 uv run python finetune_splitted.py \
     --model bert-base-uncased --dataset LSB \
     --epochs 3 --taskseq_pattern A --seed 3 --sequential-finetuning
@@ -237,10 +295,9 @@ uv run python merge_for_targetdata.py \
     --target_config target_data_config_lsb --num_target_data 200
 ```
 
-Unlike vision, the NLP target environments need no similarity estimate: the
-tasks are separate datasets, so which task an example came from is known by
-construction and the preference vector *is* the mixing ratio
-(`src/nlp/target_data.py`).
+See "Implementation flow" and "Where results go" above for how `merge_and_evaluate`
+scores every `--merge_fn` (baselines included) against every target
+environment, without needing vision's similarity estimate.
 
 The seq2seq backends (`CITB19`/`CITB38`) evaluate with generation loss rather
 than accuracy, and support the baselines only.
@@ -255,7 +312,7 @@ than accuracy, and support the baselines only.
 uv run pytest test/ -q
 ```
 
-Around 240 tests, roughly 20 seconds. Most need no GPU, no network and no
+Around 280 tests, roughly 30 seconds. Most need no GPU, no network and no
 dataset: they run the real code against synthetic task vectors and stand-in
 datasets, and cover the checkpoint layout, the merge registry, the learning-rate
 schedule, target-environment construction, and the fine-tuning loop's

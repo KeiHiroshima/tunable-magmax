@@ -135,20 +135,23 @@ def test_removed_merge_fns_are_gone_from_every_surface():
 
 
 def _read_competitor_dict() -> dict:
-    """Extract COMPETITOR_ALL_DICT from postprocessing/utils.py *without*
-    importing it — that module pulls in the whole plotting stack (seaborn,
-    pandas), which is not part of this project's declared dependencies."""
+    """Extract COMPETITOR_ALL_DICT from postprocessing/results.py *without*
+    importing it — postprocessing.utils (which re-exports it) pulls in the
+    whole plotting stack (seaborn), which is not part of this project's
+    declared dependencies. results.py has no src/ dependency either way (see
+    its module docstring), but AST extraction is kept so this test never
+    needs any of postprocessing/'s dependencies, declared or not."""
     import ast
     from pathlib import Path
 
     source = (
-        Path(__file__).resolve().parents[2] / "postprocessing" / "utils.py"
+        Path(__file__).resolve().parents[2] / "postprocessing" / "results.py"
     ).read_text()
     for node in ast.parse(source).body:
         targets = getattr(node, "targets", [])
         if targets and getattr(targets[0], "id", None) == "COMPETITOR_ALL_DICT":
             return ast.literal_eval(node.value)
-    raise AssertionError("COMPETITOR_ALL_DICT not found in postprocessing/utils.py")
+    raise AssertionError("COMPETITOR_ALL_DICT not found in postprocessing/results.py")
 
 
 def test_postprocessing_labels_stay_in_sync_with_the_registry():

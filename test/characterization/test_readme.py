@@ -40,7 +40,8 @@ def test_merge_table_reports_nlp_support_correctly():
     """`masked_magmax_with_targetdata` is the subtle one: the registry marks it
     nlp_supported=False because it cannot go through the plain
     task_vectors -> TaskVector path, but the LSB backend implements it with a
-    flow of its own. Documenting it as "vision-only" would be wrong."""
+    flow of its own (branching on spec.needs_target_data, mirroring vision's
+    src/eval.py). Documenting it as "vision-only" would be wrong."""
     table = _merge_table()
     plain_nlp = {name for name, support in table.items() if support == "yes"}
 
@@ -52,8 +53,8 @@ def test_merge_table_reports_nlp_support_correctly():
     lsb = inspect.getsource(nlp_classification_backend)
     seq2seq = inspect.getsource(nlp_seq2seq_backend)
     assert table["masked_magmax_with_targetdata"] == "`LSB` only"
-    assert "_merge_and_evaluate_masked" in lsb
-    assert "_merge_and_evaluate_masked" not in seq2seq
+    assert "needs_target_data" in lsb
+    assert "needs_target_data" not in seq2seq
 
 
 # --- defaults ---------------------------------------------------------------
@@ -204,9 +205,10 @@ def test_entry_points_exist():
         assert (REPO_ROOT / name).exists()
         assert name in README
 
-    for name in ("finetune.sh", "merge.sh", "finetune_merge.sh"):
-        assert (REPO_ROOT / "scripts" / name).exists()
-        assert f"scripts/{name}" in README
+    for backend in ("vision", "nlp"):
+        for name in ("finetune.sh", "merge.sh", "finetune_merge.sh"):
+            assert (REPO_ROOT / "scripts" / backend / name).exists()
+            assert f"scripts/{backend}/{name}" in README
 
 
 def test_documented_result_paths_match_the_writers():
