@@ -184,7 +184,7 @@ def evaluate_merged_fts_on_target_data(
             f"target{env.target_id}_seed{args.seed}.json"
         )
 
-        if os.path.exists(
+        if utils.has_evaluation_result(
             f"{args.results_db}/{spec.name}/{suffix_dir}{file_name}"
         ):
             logger.info(

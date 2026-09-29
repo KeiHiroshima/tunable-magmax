@@ -179,3 +179,39 @@ def test_proposed_method_uses_the_environments_ratio_as_its_preference_vector(tm
     assert saved["weights_each_task"] == [0.8, 0.2]
     assert "num_unaligned" in saved
     assert "num_params_all" in saved
+
+
+def test_finished_environment_is_skipped_on_rerun(tmp_path, monkeypatch):
+    target_config = _write_target_config(
+        tmp_path, monkeypatch, num_task_to_be_fetched=2, ratios=[[0.5, 0.5]], target_ids=[1]
+    )
+    args = _setup(tmp_path, monkeypatch, "magmax", target_config)
+    out_path = tmp_path / "magmax" / f"target1_seed{args.seed}.json"
+    out_path.parent.mkdir()
+    finished = {"target_id": 1, "overall_accuracy": 0.123}
+    out_path.write_text(json.dumps(finished))
+
+    calls = []
+    monkeypatch.setattr(backend, "apply_merge", lambda *a, **k: calls.append(1))
+
+    results = backend.merge_and_evaluate(args)
+
+    assert calls == []  # every environment finished: nothing merged
+    assert results[1] == finished
+    assert json.loads(out_path.read_text()) == finished  # not overwritten
+
+
+def test_unfinished_results_file_is_re_evaluated(tmp_path, monkeypatch):
+    target_config = _write_target_config(
+        tmp_path, monkeypatch, num_task_to_be_fetched=2, ratios=[[0.5, 0.5]], target_ids=[1]
+    )
+    args = _setup(tmp_path, monkeypatch, "magmax", target_config)
+    out_path = tmp_path / "magmax" / f"target1_seed{args.seed}.json"
+    out_path.parent.mkdir()
+    out_path.write_text('{"target_id": 1')  # a write cut off mid-way
+
+    results = backend.merge_and_evaluate(args)
+
+    saved = json.loads(out_path.read_text())
+    assert "overall_accuracy" in saved
+    assert saved == results[1]

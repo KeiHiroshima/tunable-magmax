@@ -5,7 +5,9 @@ set -e
 # fine-tuning run looks like a success and the merge step goes ahead
 # against checkpoints that were never written.
 set -o pipefail
-
+# print() is block-buffered when stdout is a pipe while logging flushes every
+# record, so without this the two interleave out of order in the .out files.
+export PYTHONUNBUFFERED=1
 
 model=ViT-B-16
 dataset=CIFAR100  # CIFAR100 ImageNetR
@@ -30,7 +32,7 @@ log_dir=logs/${model}/sequential_finetuning/class_incremental/${ft_dir_name}/${d
 mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 
-python finetune_splitted.py \
+uv run python finetune_splitted.py \
     --model ${model} \
     --dataset ${dataset} \
     --epochs ${epochs} \
@@ -63,7 +65,36 @@ mkdir -p ${log_dir}
 
 if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
     similarity_metric=labels #labels ot_embedded cosine_embedded mmd_embedded
-    python merge_for_targetdata.py --model ${model} --dataset ${dataset} --epochs ${epochs} --n_splits ${n_splits} --split_strategy class --sequential-finetuning --results_db ${log_dir} --taskseq_pattern ${task_seq} --merge_fn ${merge_fn} --similarity_metric ${similarity_metric} --num_train_data_each_task ${num_train_data_each_task} --num_target_data ${num_target_data} --seed ${seed} --gpu_id ${gpu_id}
+    uv run python merge_for_targetdata.py \
+        --model ${model} \
+        --dataset ${dataset} \
+        --epochs ${epochs} \
+        --n_splits ${n_splits} \
+        --split_strategy class \
+        --sequential-finetuning \
+        --results_db ${log_dir} \
+        --taskseq_pattern ${task_seq} \
+        --merge_fn ${merge_fn} \
+        --similarity_metric ${similarity_metric} \
+        --num_train_data_each_task ${num_train_data_each_task} \
+        --num_target_data ${num_target_data} \
+        --seed ${seed} \
+        --gpu_id ${gpu_id} \
+        |& tee ${out_dir}/merge-${merge_fn}-${similarity_metric}-seed:${seed}.out
 else
-    python merge_for_targetdata.py --model ${model} --dataset ${dataset} --epochs ${epochs} --n_splits ${n_splits} --split_strategy class --sequential-finetuning --results_db ${log_dir} --taskseq_pattern ${task_seq} --merge_fn ${merge_fn} --num_train_data_each_task ${num_train_data_each_task} --num_target_data ${num_target_data} --seed ${seed} --gpu_id ${gpu_id}
+    uv run python merge_for_targetdata.py \
+        --model ${model} \
+        --dataset ${dataset} \
+        --epochs ${epochs} \
+        --n_splits ${n_splits} \
+        --split_strategy class \
+        --sequential-finetuning \
+        --results_db ${log_dir} \
+        --taskseq_pattern ${task_seq} \
+        --merge_fn ${merge_fn} \
+        --num_train_data_each_task ${num_train_data_each_task} \
+        --num_target_data ${num_target_data} \
+        --seed ${seed} \
+        --gpu_id ${gpu_id} \
+        |& tee ${out_dir}/merge-${merge_fn}-seed:${seed}.out
 fi

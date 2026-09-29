@@ -27,6 +27,7 @@ FINETUNE_ARGV = [
     "--seed", "3",
     "--results_db", "logs/ViT-B-16/run",
     "--taskseq_pattern", "A",
+    "--wandb_entity_name", "keihiroshima",
 ]
 
 # scripts/vision/merge.sh, masked_magmax_with_targetdata branch (n_splits=5).
@@ -57,6 +58,7 @@ NLP_FINETUNE_ARGV = [
     "--sequential-finetuning",
     "--seed", "3",
     "--taskseq_pattern", "A",
+    "--wandb_entity_name", "keihiroshima",
 ]
 
 # scripts/nlp/merge.sh with its committed defaults.

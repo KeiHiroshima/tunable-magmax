@@ -14,6 +14,7 @@ import pytest
 from src.eval import _build_merged_encoder, _save_target_eval_results
 from src.merging.registry import get_merge_spec
 from src.merging.task_vector import TaskVector
+from src.utils import has_evaluation_result
 
 
 def _args(**overrides):
@@ -196,3 +197,30 @@ def test_merge_function_derives_its_log_path_from_the_cli_name():
 
     assert 'Path(args.results_db) / args.merge_fn' in source
     assert '"merge_max_abs_masked_with_targetdata"' not in source
+
+
+# --- skip-if-done: which existing results files count as finished -----------
+
+
+def test_missing_results_file_is_not_done(tmp_path):
+    assert not has_evaluation_result(str(tmp_path / "absent.json"))
+
+
+def test_results_file_with_an_accuracy_is_done(tmp_path):
+    path = tmp_path / "done.json"
+    path.write_text(json.dumps({"overall_accuracy": 0.8, "num_unaligned": {}}))
+    assert has_evaluation_result(str(path))
+
+
+def test_results_file_holding_only_the_merge_log_is_not_done(tmp_path):
+    # What merge_max_abs_masked_with_targetdata leaves behind when the run dies
+    # between merging and evaluating: the merge log, no accuracy.
+    path = tmp_path / "merged_only.json"
+    path.write_text(json.dumps({"num_unaligned": {"task_1": 0}, "num_params_all": 10}))
+    assert not has_evaluation_result(str(path))
+
+
+def test_truncated_results_file_is_not_done(tmp_path):
+    path = tmp_path / "truncated.json"
+    path.write_text('{"overall_accuracy": 0.8, "taskwise_')
+    assert not has_evaluation_result(str(path))
