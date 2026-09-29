@@ -95,6 +95,8 @@ backends, which stream from the Hugging Face Hub (cached under `HF_HOME`).
 
 ```bash
 bash scripts/vision/finetune.sh          # edit the variables at the top first
+# every n_splits x seed (5/20/50 x 3/4/5) for one dataset; resumable, continues past failures:
+dataset=CIFAR100 bash scripts/vision/finetune_all.sh
 ```
 
 Or directly:
@@ -112,15 +114,37 @@ A run that is interrupted can be resumed by re-issuing the same command:
 checkpoints that already exist are skipped, and the next task still continues
 from the one before it.
 
-> **The `scripts/**/*.sh` wrappers call bare `python`.** Activate the environment
-> first (`source .venv/bin/activate`, or `conda activate magmax`) — `uv run bash
-> scripts/...` does not put the virtualenv on `PATH` for the inner call.
+> **The `scripts/**/*.sh` wrappers call `uv run python`**, so run them with plain
+> `bash scripts/...` from the repository root; no environment needs activating.
+> Under conda, replace `uv run python` with `python` in the script.
+> The fine-tuning scripts pass `--wandb_entity_name` (set at the top of each
+> script); set `WANDB_MODE=offline` or `disabled` to run without a W&B account.
 
 ### Step 2: Merging and evaluation
 
 ```bash
 bash scripts/vision/merge.sh
 ```
+
+Every variable at the top of `merge.sh` can be overridden from the environment
+(`merge_fn=magmax n_splits=20 bash scripts/vision/merge.sh`). To run every
+method for one fine-tuned run — each baseline once, the proposed method once per
+similarity metric — use `merge_comparison.sh`, which takes the same overrides plus
+`merge_fns` / `similarity_metrics` lists:
+
+```bash
+dataset=CIFAR100 n_splits=20 seed=3 bash scripts/vision/merge_comparison.sh
+# every n_splits x seed (5/20/50 x 3/4/5), after finetune_all.sh:
+dataset=CIFAR100 bash scripts/vision/merge_comparison_all.sh
+# Fig. 4 (number of tasks in the target environment):
+n_splits=20 target_config=target_data_config_split20 \
+    merge_fns="magmax masked_magmax_with_targetdata" similarity_metrics="labels ot_embedded" \
+    bash scripts/vision/merge_comparison.sh
+```
+
+A failing method does not stop the sweep; failures are listed at the end.
+Each method's stdout goes to
+`outs/{model}/sequential_finetuning/class_incremental/{dir_name}/{dataset}-{n_splits}/taskseq_{p}/merge-{merge_fn}[-{similarity_metric}]-{target_config}-seed:{s}.out`.
 
 Or directly:
 
@@ -279,7 +303,18 @@ bash scripts/nlp/finetune.sh             # edit the variables at the top first
 bash scripts/nlp/merge.sh
 # or, combined:
 bash scripts/nlp/finetune_merge.sh
+# every merge_fn for one fine-tuned run (variables overridable as for vision):
+seed=3 bash scripts/nlp/merge_comparison.sh
+# every seed (3/4/5); LSB has no n_splits, so seed is the only axis:
+bash scripts/nlp/finetune_all.sh
+bash scripts/nlp/merge_comparison_all.sh
 ```
+
+`merge_comparison.sh` has no similarity-metric loop, since the NLP backend
+ignores `--similarity_metric`. As for vision, a target environment whose
+results file already holds an `overall_accuracy` is skipped, so re-running any
+of these resumes where it stopped. Each method's stdout is appended to
+`outs/{model}/nlp_classification/{dataset}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`.
 
 Or directly:
 

@@ -28,7 +28,7 @@ from src.nlp.target_data import build_target_weights, sample_target_eval_subset
 from src.nlp.trainer_nlp import classification_correct_and_total, train_classification_task
 from src.paths import checkpoint_dir, finetuned_path
 from src.target_env import load_target_envs, select_target_tasks
-from src.utils import derive_seed, torch_load
+from src.utils import derive_seed, has_evaluation_result, torch_load
 
 logger = getLogger(__name__)
 
@@ -93,14 +93,24 @@ def merge_and_evaluate(args):
     # proposed method's weights — and therefore its merged vector — depend on
     # the target environment (its preference vector *is* that environment's
     # task-sampling ratio; see src/nlp/target_data.py), so it is left to be
-    # recomputed per environment.
-    fixed_merged_tv = None if spec.needs_target_data else apply_merge(spec, task_vectors)
+    # recomputed per environment. Merged lazily, so a resumed run whose
+    # environments are all finished does no merging at all.
+    fixed_merged_tv = None
 
     out_dir = os.path.join(ckpt_dir, args.merge_fn)
     os.makedirs(out_dir, exist_ok=True)
 
     results_by_target = {}
     for env in load_target_envs(args, n_tasks=len(tasks)):
+        # Same skip-if-finished rule as vision's src/eval.py, so an interrupted
+        # run resumes instead of re-evaluating every environment.
+        out_path = os.path.join(out_dir, f"target{env.target_id}_seed{args.seed}.json")
+        if has_evaluation_result(out_path):
+            logger.info(f"Result file {out_path} already exists. Skipping evaluation.")
+            with open(out_path) as f:
+                results_by_target[env.target_id] = json.load(f)
+            continue
+
         task_idx_selected = select_target_tasks(len(tasks), env.n_tasks_fetched, env.seed)
 
         if spec.needs_target_data:
@@ -109,6 +119,8 @@ def merge_and_evaluate(args):
                 task_vectors, weights_each_task, seed=derive_seed(args.seed, env.target_id)
             )
         else:
+            if fixed_merged_tv is None:
+                fixed_merged_tv = apply_merge(spec, task_vectors)
             merged_tv = fixed_merged_tv
 
         # Exact micro-average: sum correct / sum total over the actual
@@ -139,7 +151,7 @@ def merge_and_evaluate(args):
             result["num_params_all"] = num_params_all
 
         results_by_target[env.target_id] = result
-        with open(os.path.join(out_dir, f"target{env.target_id}_seed{args.seed}.json"), "w") as f:
+        with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
 
     logger.info(f"Saved {args.merge_fn} results to {out_dir}")

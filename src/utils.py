@@ -60,6 +60,26 @@ def torch_load(save_path, device=None):
     return model
 
 
+def has_evaluation_result(json_path) -> bool:
+    """Whether `json_path` holds a finished evaluation, i.e. has an accuracy.
+
+    Both backends skip a target environment whose results file is finished, so
+    an interrupted merge run resumes where it stopped. Existence alone is not
+    enough: vision's merge_max_abs_masked_with_targetdata writes
+    num_unaligned/num_params_all to this same file *before* the model is
+    evaluated, so a run that dies during evaluation leaves a file with no
+    accuracy in it, and treating that as done would skip the target forever.
+    An unreadable file (a write cut off mid-way) is likewise not done.
+    """
+    if not os.path.exists(json_path):
+        return False
+    try:
+        with open(json_path) as f:
+            return "overall_accuracy" in json.load(f)
+    except json.JSONDecodeError:
+        return False
+
+
 def get_logits(inputs, classifier):
     assert callable(classifier)
     if hasattr(classifier, "to"):
@@ -106,6 +126,10 @@ transform = T.Compose(
 
 def setup_logging(config_path="logging_config.json", level=None):
     """
+    Every src.* module logs through getLogger(__name__), which propagates to
+    the root logger, so the root logger is where the console handler lives.
+    There is no file handler: the scripts under scripts/ tee stdout to a file.
+
     Args:
         config_path:
         level: ('DEBUG', 'INFO', 'WARNING', 'ERROR')
