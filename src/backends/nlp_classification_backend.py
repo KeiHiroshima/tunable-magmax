@@ -1,5 +1,15 @@
-"""Long Sequence Benchmark (LSB) pipeline: BertClassifier, task-incremental
-(each task is already its own dataset, no class-incremental splitting).
+"""StdCL / LSB pipeline: O-LoRA's continual-learning text classification
+benchmarks with T5, task-incremental (each task is already its own dataset,
+no class-incremental splitting). See src/nlp/long_sequence_benchmark.py for
+the benchmarks, the prompt, and the data.
+
+Two fine-tuning modes (--finetune_mode):
+
+    full  every parameter but the shared embedding is trained (t5-base); a
+          whole checkpoint is saved per task, as vision does.
+    lora  a LoRA adapter per task, merged into the weights before the next
+          task starts (t5-large); only adapters are saved, and each task's
+          model — hence its task vector — is rebuilt from them here.
 
 Mirrors vision_backend.py's two-stage structure (finetune saves per-task
 checkpoints; merge_and_evaluate reloads them). merge_and_evaluate also mirrors
@@ -15,6 +25,7 @@ import json
 import os
 from logging import getLogger
 
+import torch
 from torch.utils.data import DataLoader
 
 from src.config import get_zeroshot_checkpoint
@@ -22,11 +33,12 @@ from src.merging.registry import apply_merge, get_merge_spec
 from src.merging.task_vector import TaskVector
 from src.merging.task_vectors import mask_and_merge_by_weights
 from src.nlp.finetune_nlp import finetune_task_sequence
-from src.nlp.long_sequence_benchmark import TASK_ORDER_PATTERNS, build_lsb_task_sequence
-from src.nlp.modeling_nlp import BertClassifier
+from src.nlp.long_sequence_benchmark import EVAL_BATCH_SIZE, build_task_sequence
+from src.nlp.lora import LoraConfig, adapters_to_vector
+from src.nlp.modeling_nlp import build_t5, freeze_shared_embeddings
 from src.nlp.target_data import build_target_weights, sample_target_eval_subset
-from src.nlp.trainer_nlp import classification_correct_and_total, train_classification_task
-from src.paths import checkpoint_dir, finetuned_path
+from src.nlp.trainer_nlp import generation_correct_and_total, train_seq2seq_task
+from src.paths import adapter_path, checkpoint_dir, finetuned_path
 from src.target_env import load_target_envs, select_target_tasks
 from src.utils import derive_seed, has_evaluation_result, torch_load
 
@@ -34,11 +46,27 @@ logger = getLogger(__name__)
 
 
 def _ckpt_dir(args):
-    return checkpoint_dir(args, group="nlp_classification", scope=args.dataset)
+    # A LoRA run and a full run of the same model/order/seed must not share a
+    # directory: they write different files, and a merge would read whichever
+    # kind it expects.
+    scope = args.dataset if args.finetune_mode == "full" else f"{args.dataset}-{args.finetune_mode}"
+    return checkpoint_dir(args, group="nlp_classification", scope=scope)
 
 
 def _build_tasks(args):
-    return build_lsb_task_sequence(TASK_ORDER_PATTERNS[args.taskseq_pattern], tokenizer_name=args.model)
+    return build_task_sequence(
+        args.dataset, args.taskseq_pattern, tokenizer_name=args.model, batch_size=args.batch_size
+    )
+
+
+def _lora_config(args):
+    return LoraConfig() if args.finetune_mode == "lora" else None
+
+
+def _tokenizer(args):
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(args.model)
 
 
 def finetune(args):
@@ -46,31 +74,62 @@ def finetune(args):
         args,
         _build_tasks(args),
         _ckpt_dir(args),
-        build_base_model=BertClassifier,
-        train_task=train_classification_task,
-        # Each LSB task has its own label space, so the shared encoder gets a
-        # freshly sized head before every task.
-        prepare_model=lambda model, task: model.reset_head(task.num_labels),
+        build_base_model=build_t5,
+        train_task=train_seq2seq_task,
+        # No per-task head (every task generates its label as text); the
+        # shared embedding is frozen as in O-LoRA. Under LoRA every base
+        # parameter is frozen anyway.
+        prepare_model=lambda model, task: freeze_shared_embeddings(model),
+        lora=_lora_config(args),
     )
 
 
-def _evaluate_on_target_env(merged_tv, zeroshot_path, tasks, finetuned_paths, task_idx_selected, env, args):
-    """Apply merged_tv, then score it on this one target environment's mixture
-    (env.ratio of each selected task's own eval split). Returns
-    (num_data_each_task, taskwise_accuracies, overall_correct, overall_total)."""
-    merged_model = merged_tv.apply_to(zeroshot_path, scaling_coef=0.5).to(args.device)
+def _load_task_vectors(args, ckpt_dir, zeroshot_path, n_tasks):
+    """One TaskVector per task: the model after task i minus the zero-shot
+    model. Under LoRA that is the running sum of adapters 0..i (or adapter i
+    alone without --sequential-finetuning), over the adapted weights only."""
+    if args.finetune_mode == "full":
+        return [TaskVector(zeroshot_path, finetuned_path(ckpt_dir, i)) for i in range(n_tasks)]
 
+    adapters = [
+        torch.load(adapter_path(ckpt_dir, i), weights_only=False) for i in range(n_tasks)
+    ]
+    if args.sequential_finetuning:
+        return [TaskVector(vector=adapters_to_vector(adapters[: i + 1])) for i in range(n_tasks)]
+    return [TaskVector(vector=adapters_to_vector([a])) for a in adapters]
+
+
+@torch.no_grad()
+def _apply_task_vector(merged_tv, zeroshot_path, scaling_coef, device):
+    """zero-shot + scaling_coef * merged_tv, over the keys merged_tv has.
+
+    TaskVector.apply_to computes the same thing but prints a warning for
+    every key the vector lacks — under LoRA that is every parameter but the
+    q/v projections — so this backend applies it itself.
+    """
+    model = torch_load(zeroshot_path)
+    state = model.state_dict()
+    for key, delta in merged_tv.vector.items():
+        state[key] = state[key] + scaling_coef * delta
+    model.load_state_dict(state)
+    return model.to(device)
+
+
+def _score(model, task, dataset, tokenizer, args):
+    loader = DataLoader(dataset, batch_size=EVAL_BATCH_SIZE, collate_fn=task.eval_loader.collate_fn)
+    return generation_correct_and_total(model, loader, tokenizer, args.device)
+
+
+def _evaluate_on_target_env(merged_model, tasks, task_idx_selected, env, tokenizer, args):
+    """Score merged_model on this one target environment's mixture (env.ratio
+    of each selected task's own test split). Returns
+    (num_data_each_task, taskwise_accuracies, overall_correct, overall_total)."""
     num_data_each_task, taskwise_accuracies = {}, {}
     overall_correct, overall_total = 0, 0
     for i, r in zip(task_idx_selected, env.ratio):
         task = tasks[i]
         target_subset = sample_target_eval_subset(task, round(env.num_target_data * r), env.seed)
-        # The merged (shared) encoder needs *that task's own trained* head to
-        # be evaluated meaningfully — a fresh head would just be random.
-        merged_model.head = torch_load(finetuned_paths[i], device=args.device).head
-        correct, total = classification_correct_and_total(
-            merged_model, DataLoader(target_subset, batch_size=32), args.device
-        )
+        correct, total = _score(merged_model, task, target_subset, tokenizer, args)
         num_data_each_task[task.name] = total
         taskwise_accuracies[task.name] = correct / total
         overall_correct += correct
@@ -79,12 +138,32 @@ def _evaluate_on_target_env(merged_tv, zeroshot_path, tasks, finetuned_paths, ta
     return num_data_each_task, taskwise_accuracies, overall_correct, overall_total
 
 
+def _evaluate_on_full_testsets(merged_model, tasks, tokenizer, args, out_path):
+    """O-LoRA's Average Accuracy: every task's whole test split, then the
+    unweighted mean over tasks (paper §4.1.2)."""
+    if has_evaluation_result(out_path, key="average_accuracy"):
+        logger.info(f"Result file {out_path} already exists. Skipping full-test-set evaluation.")
+        return
+    taskwise = {}
+    for task in tasks:
+        correct, total = _score(merged_model, task, task.eval_loader.dataset, tokenizer, args)
+        taskwise[task.name] = correct / total
+        logger.info(f"{args.merge_fn} {task.name}: accuracy={taskwise[task.name]:.4f} ({total} examples)")
+    result = {
+        "taskwise_accuracies": taskwise,
+        "average_accuracy": sum(taskwise.values()) / len(taskwise),
+    }
+    logger.info(f"{args.merge_fn}: average_accuracy={result['average_accuracy']:.4f}")
+    with open(out_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+
 def merge_and_evaluate(args):
     tasks = _build_tasks(args)
     ckpt_dir = _ckpt_dir(args)
     zeroshot_path = get_zeroshot_checkpoint(args.model)
-    finetuned_paths = [finetuned_path(ckpt_dir, i) for i in range(len(tasks))]
-    task_vectors = [TaskVector(zeroshot_path, p) for p in finetuned_paths]
+    task_vectors = _load_task_vectors(args, ckpt_dir, zeroshot_path, len(tasks))
+    tokenizer = _tokenizer(args)
 
     spec = get_merge_spec(args.merge_fn)
     # Every baseline (finetune/random_mix/average/ties/magmax) merges the same
@@ -95,7 +174,15 @@ def merge_and_evaluate(args):
     # task-sampling ratio; see src/nlp/target_data.py), so it is left to be
     # recomputed per environment. Merged lazily, so a resumed run whose
     # environments are all finished does no merging at all.
-    fixed_merged_tv = None
+    fixed_merged_model = None
+
+    def _fixed_merged_model():
+        nonlocal fixed_merged_model
+        if fixed_merged_model is None:
+            fixed_merged_model = _apply_task_vector(
+                apply_merge(spec, task_vectors), zeroshot_path, args.scaling_coef, args.device
+            )
+        return fixed_merged_model
 
     out_dir = os.path.join(ckpt_dir, args.merge_fn)
     os.makedirs(out_dir, exist_ok=True)
@@ -118,15 +205,14 @@ def merge_and_evaluate(args):
             merged_tv, num_unaligned, num_params_all = mask_and_merge_by_weights(
                 task_vectors, weights_each_task, seed=derive_seed(args.seed, env.target_id)
             )
+            merged_model = _apply_task_vector(merged_tv, zeroshot_path, args.scaling_coef, args.device)
         else:
-            if fixed_merged_tv is None:
-                fixed_merged_tv = apply_merge(spec, task_vectors)
-            merged_tv = fixed_merged_tv
+            merged_model = _fixed_merged_model()
 
         # Exact micro-average: sum correct / sum total over the actual
         # sampled examples, not a mean of per-task ratios/accuracies.
         num_data_each_task, taskwise_accuracies, overall_correct, overall_total = _evaluate_on_target_env(
-            merged_tv, zeroshot_path, tasks, finetuned_paths, task_idx_selected, env, args
+            merged_model, tasks, task_idx_selected, env, tokenizer, args
         )
         overall_accuracy = overall_correct / overall_total
         logger.info(f"{args.merge_fn} target {env.target_id}: overall_accuracy={overall_accuracy:.4f}")
@@ -153,6 +239,16 @@ def merge_and_evaluate(args):
         results_by_target[env.target_id] = result
         with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
+
+    # The paper's own metric, for the methods that yield one model. The
+    # proposed method's model depends on the target environment, so it has
+    # no single Average Accuracy (its all-tasks-uniform environment is the
+    # closest counterpart).
+    if args.eval_full_testsets and not spec.needs_target_data:
+        _evaluate_on_full_testsets(
+            _fixed_merged_model(), tasks, tokenizer, args,
+            os.path.join(out_dir, f"full_testsets_seed{args.seed}.json"),
+        )
 
     logger.info(f"Saved {args.merge_fn} results to {out_dir}")
     return results_by_target

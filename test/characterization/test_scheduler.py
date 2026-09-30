@@ -222,3 +222,39 @@ def test_no_step_count_flag_survives():
         source = inspect.getsource(module)
         assert "args.warmup_length" not in source, module.__name__
         assert '"--warmup_length"' not in source, module.__name__
+
+
+# --- --lr_schedule constant (StdCL/LSB, following O-LoRA) -------------------
+
+
+def test_constant_schedule_holds_the_base_rate_from_the_first_step():
+    """O-LoRA's T5 runs use a constant learning rate with no warmup; the
+    ratio is irrelevant there and must not introduce a ramp."""
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.0)
+    scheduler = build_scheduler(
+        optimizer, Namespace(lr=1e-3, warmup_ratio=0.1, lr_schedule="constant"), 100
+    )
+    lrs = []
+    for step in range(100):
+        scheduler(step)
+        lrs.append(optimizer.param_groups[0]["lr"])
+
+    assert lrs == [1e-3] * 100
+
+
+def test_cosine_is_still_the_schedule_when_none_is_named():
+    """Vision's args always carry lr_schedule="cosine" after parsing, but
+    callers that build args by hand (these tests, for one) may omit it."""
+    assert _schedule(0.1, 100) == _schedule_named("cosine", 0.1, 100)
+
+
+def _schedule_named(name, ratio, steps, base_lr=1e-5):
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=base_lr)
+    scheduler = build_scheduler(
+        optimizer, Namespace(lr=base_lr, warmup_ratio=ratio, lr_schedule=name), steps
+    )
+    lrs = []
+    for step in range(steps):
+        scheduler(step)
+        lrs.append(optimizer.param_groups[0]["lr"])
+    return lrs

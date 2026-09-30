@@ -239,12 +239,20 @@ def test_skipped_tasks_do_not_get_a_head_swap(loop):
 
 
 @pytest.mark.parametrize(
-    "module_name,expect_prepare_model",
-    [("nlp_classification_backend", True), ("nlp_seq2seq_backend", False)],
+    "module_name,dataset,pattern,finetune_mode,expect_prepare_model,expect_lora",
+    [
+        ("nlp_classification_backend", "StdCL", "1", "full", True, False),
+        ("nlp_classification_backend", "LSB", "4", "lora", True, True),
+        ("nlp_seq2seq_backend", "CITB19", "A", "full", False, False),
+    ],
 )
-def test_backends_delegate_to_the_shared_loop(module_name, expect_prepare_model, monkeypatch):
+def test_backends_delegate_to_the_shared_loop(
+    module_name, dataset, pattern, finetune_mode, expect_prepare_model, expect_lora, monkeypatch
+):
     """Both NLP backends must go through finetune_task_sequence rather than
-    growing a private copy of the loop again."""
+    growing a private copy of the loop again. StdCL/LSB use prepare_model to
+    freeze T5's shared embedding, and pass a LoRA config exactly under
+    --finetune_mode lora."""
     import importlib
 
     backend = importlib.import_module(f"src.backends.{module_name}")
@@ -258,10 +266,11 @@ def test_backends_delegate_to_the_shared_loop(module_name, expect_prepare_model,
     monkeypatch.setattr(backend, "_build_tasks", lambda args: [])
 
     args = Namespace(
-        model="bert-base-uncased",
-        dataset="LSB" if expect_prepare_model else "CITB19",
-        epochs=3,
-        taskseq_pattern="A",
+        model="t5-base",
+        dataset=dataset,
+        finetune_mode=finetune_mode,
+        epochs=1,
+        taskseq_pattern=pattern,
         seed=3,
         sequential_finetuning=True,
     )
@@ -271,3 +280,18 @@ def test_backends_delegate_to_the_shared_loop(module_name, expect_prepare_model,
     assert callable(captured["build_base_model"])
     assert callable(captured["train_task"])
     assert (captured.get("prepare_model") is not None) is expect_prepare_model
+    assert (captured.get("lora") is not None) is expect_lora
+
+
+def test_lora_and_full_runs_do_not_share_a_checkpoint_directory():
+    """They write different files (adapter_{i}.pt vs finetuned_{i}.pt), and a
+    merge reads whichever kind its --finetune_mode expects."""
+    from src.backends import nlp_classification_backend as backend
+
+    common = dict(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4",
+                  seed=3, sequential_finetuning=True)
+    full = backend._ckpt_dir(Namespace(finetune_mode="full", **common))
+    lora = backend._ckpt_dir(Namespace(finetune_mode="lora", **common))
+
+    assert full != lora
+    assert "/LSB-lora/" in lora

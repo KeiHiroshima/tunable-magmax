@@ -38,6 +38,16 @@ def cosine_lr(optimizer, base_lrs, warmup_length, steps):
     return _lr_adjuster
 
 
+def constant_lr(optimizer, base_lr):
+    """The same step -> None adjuster interface as cosine_lr, holding base_lr."""
+
+    def _lr_adjuster(step):
+        for param_group in optimizer.param_groups:
+            assign_learning_rate(param_group, base_lr)
+
+    return _lr_adjuster
+
+
 def accuracy(output, target, topk=(1,)):
     pred = output.topk(max(topk), 1, True, True)[1].t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
@@ -60,8 +70,9 @@ def torch_load(save_path, device=None):
     return model
 
 
-def has_evaluation_result(json_path) -> bool:
-    """Whether `json_path` holds a finished evaluation, i.e. has an accuracy.
+def has_evaluation_result(json_path, key="overall_accuracy") -> bool:
+    """Whether `json_path` holds a finished evaluation, i.e. has an accuracy
+    (`key`: the NLP backend's full-test-set results store `average_accuracy`).
 
     Both backends skip a target environment whose results file is finished, so
     an interrupted merge run resumes where it stopped. Existence alone is not
@@ -75,7 +86,7 @@ def has_evaluation_result(json_path) -> bool:
         return False
     try:
         with open(json_path) as f:
-            return "overall_accuracy" in json.load(f)
+            return key in json.load(f)
     except json.JSONDecodeError:
         return False
 

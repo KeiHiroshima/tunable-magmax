@@ -8,6 +8,7 @@ from src.backends import nlp_classification_backend, nlp_seq2seq_backend, vision
 DATASET_TO_BACKEND = {
     "CIFAR100": vision_backend,
     "ImageNetR": vision_backend,
+    "StdCL": nlp_classification_backend,
     "LSB": nlp_classification_backend,
     "CITB19": nlp_seq2seq_backend,
     "CITB38": nlp_seq2seq_backend,

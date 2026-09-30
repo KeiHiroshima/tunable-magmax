@@ -1,4 +1,4 @@
-"""A few-hundred-parameter stand-in for ImageEncoder / BertClassifier.
+"""A few-hundred-parameter stand-in for ImageEncoder / the NLP models.
 
 Lives in its own importable module (not in conftest.py) because
 src/utils.py::torch_save pickles the *whole model object*, so the class must

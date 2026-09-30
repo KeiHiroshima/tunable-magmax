@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run every merge_fn for one fine-tuned LSB run, by calling scripts/nlp/merge.sh
+# Run every merge_fn for one fine-tuned StdCL/LSB run, by calling scripts/nlp/merge.sh
 # once per method.
 #
 # Unlike scripts/vision/merge_comparison.sh there is no similarity_metric loop: the NLP
@@ -12,9 +12,9 @@
 # already finished are skipped inside merge_for_targetdata.py, so re-running
 # resumes the sweep.
 #
-# Everything merge.sh reads (seed, epochs, task_seq, target_config, ...) can be
-# overridden from the environment and is passed through, e.g.
-#   seed=4 bash scripts/nlp/merge_comparison.sh
+# Everything merge.sh reads (model, dataset, task_seq, seed, target_config, ...)
+# can be overridden from the environment and is passed through, e.g.
+#   model=t5-large dataset=LSB task_seq=4 seed=4 bash scripts/nlp/merge_comparison.sh
 #   merge_fns="magmax masked_magmax_with_targetdata" bash scripts/nlp/merge_comparison.sh
 
 merge_fns=${merge_fns:-"finetune random_mix average ties magmax masked_magmax_with_targetdata"}

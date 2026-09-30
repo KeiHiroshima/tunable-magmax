@@ -15,7 +15,7 @@ The layout is:
 its own (see the `_ckpt_dir` helper each one defines):
 
     vision        group="{split_strategy}_incremental"  scope="{dataset}-{n_splits}"
-    NLP (cls)     group="nlp_classification"            scope="{dataset}"
+    NLP (cls)     group="nlp_classification"            scope="{dataset}[-lora]"
     NLP (seq2seq) group="nlp_seq2seq"                   scope="{dataset}"
 """
 
@@ -55,3 +55,13 @@ def checkpoint_dir(args, *, group: str, scope: str) -> str:
 def finetuned_path(ckpt_dir: str, idx: int) -> str:
     """The checkpoint written after fine-tuning on task/split `idx`."""
     return os.path.join(ckpt_dir, f"finetuned_{idx}.pt")
+
+
+def adapter_path(ckpt_dir: str, idx: int) -> str:
+    """The LoRA adapter written after fine-tuning on task `idx`.
+
+    Used instead of finetuned_path under --finetune_mode lora: only the
+    adapter is stored, and the model after task `idx` is rebuilt as the
+    zero-shot checkpoint plus adapters 0..idx (src/nlp/lora.py).
+    """
+    return os.path.join(ckpt_dir, f"adapter_{idx}.pt")
