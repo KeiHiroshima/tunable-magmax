@@ -69,8 +69,7 @@ MERGE_SPECS: dict[str, MergeSpec] = {
         # Needs a whole target-environment-construction flow (which tasks, in
         # what ratio, sampled eval data) rather than a plain
         # task_vectors -> TaskVector call. The NLP backends build that flow
-        # themselves; see nlp_classification_backend::_merge_and_evaluate_masked
-        # and src/nlp/target_data.py.
+        # themselves.
         nlp_supported=False,
     ),
 }
