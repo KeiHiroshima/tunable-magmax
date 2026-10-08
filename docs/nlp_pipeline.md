@@ -169,6 +169,8 @@ uv run python postprocessing/build_comparison_table.py --backend nlp \
     --target_config target_data_config_lsb --seeds 3,4,5
 ```
 
+複数の model・設定・Order の結果を `logs/nlp/` に集めて一度に集計するときは [aggregate_nlp_logs.py](../postprocessing/aggregate_nlp_logs.py) を使う。手順は [nlp_aggregation.md](nlp_aggregation.md) を参照。
+
 ---
 
 ## まとめ：実装の共有関係
