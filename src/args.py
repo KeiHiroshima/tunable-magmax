@@ -4,6 +4,36 @@ import random
 import numpy as np
 import torch
 from src.config import DATA_DIR, OPENCLIP_CACHE_DIR
+from src.nlp.long_sequence_benchmark import TASK_ORDERS
+
+# Defaults that differ between the StdCL/LSB (T5) pipeline and everything
+# else. The flags default to None and are resolved after parsing
+# (_resolve_training_defaults), so vision and CITB keep exactly the values
+# they had before these benchmarks existed.
+_DEFAULT_LR = 1e-5
+_DEFAULT_WD = 0.1
+_DEFAULT_LR_SCHEDULE = "cosine"
+# O-LoRA's T5 setting: AdamW at a constant 1e-3 for LoRA, no weight decay.
+# Full fine-tuning at 1e-3 is far too aggressive for AdamW, hence 1e-4.
+_T5_DEFAULT_LR = {"full": 1e-4, "lora": 1e-3}
+_T5_DEFAULT_WD = 0.0
+_T5_DEFAULT_LR_SCHEDULE = "constant"
+
+
+def warmup_ratio(value: str) -> float:
+    """--warmup_ratio must leave room for the cosine decay to actually run.
+
+    At 1.0 the whole schedule is linear warmup: the learning rate climbs to
+    --lr on the last step and never decays. Anything above that is worse — it
+    never even reaches --lr. This is the failure the previous step-count flag
+    produced silently, so it is rejected at the boundary instead.
+    """
+    ratio = float(value)
+    if not 0.0 < ratio < 1.0:
+        raise argparse.ArgumentTypeError(
+            f"--warmup_ratio must be in (0, 1), got {ratio}"
+        )
+    return ratio
 
 
 def seed_everything(seed):
@@ -13,7 +43,31 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def parse_arguments():
+def _resolve_training_defaults(parser, args):
+    """Fill --lr/--wd/--lr_schedule for whichever pipeline --dataset selects,
+    and reject combinations only one pipeline understands."""
+    t5 = args.dataset in TASK_ORDERS
+    if t5:
+        if args.taskseq_pattern not in TASK_ORDERS[args.dataset]:
+            parser.error(
+                f"--taskseq_pattern {args.taskseq_pattern} is not an order of "
+                f"{args.dataset}; choose one of {sorted(TASK_ORDERS[args.dataset])}"
+            )
+    elif args.finetune_mode != "full":
+        parser.error("--finetune_mode lora is only implemented for StdCL/LSB")
+
+    if args.lr is None:
+        args.lr = _T5_DEFAULT_LR[args.finetune_mode] if t5 else _DEFAULT_LR
+    if args.wd is None:
+        args.wd = _T5_DEFAULT_WD if t5 else _DEFAULT_WD
+    if args.lr_schedule is None:
+        args.lr_schedule = _T5_DEFAULT_LR_SCHEDULE if t5 else _DEFAULT_LR_SCHEDULE
+
+
+def parse_arguments(argv=None):
+    """Parse the CLI. `argv` defaults to None, i.e. sys.argv[1:], so every
+    existing call site is unchanged; passing it explicitly lets tests exercise
+    the real parser without having to patch sys.argv."""
     parser = argparse.ArgumentParser()
 
     # DATASETS
@@ -59,13 +113,53 @@ def parse_arguments():
         type=int,
         default=128,
     )
-    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate.")
-    parser.add_argument("--wd", type=float, default=0.1, help="Weight decay")
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help=(
+            "Learning rate. Default 1e-5; for StdCL/LSB 1e-4 under "
+            "--finetune_mode full and 1e-3 under --finetune_mode lora."
+        ),
+    )
+    parser.add_argument(
+        "--wd", type=float, default=None, help="Weight decay. Default 0.1; 0 for StdCL/LSB."
+    )
+    parser.add_argument(
+        "--lr_schedule",
+        type=str,
+        default=None,
+        choices=["cosine", "constant"],
+        help="Default cosine (with --warmup_ratio warmup); constant for StdCL/LSB.",
+    )
+    parser.add_argument(
+        "--finetune_mode",
+        type=str,
+        default="full",
+        choices=["full", "lora"],
+        help=(
+            "StdCL/LSB only. full: train every parameter, save a checkpoint per "
+            "task. lora: train a LoRA adapter per task, merged into the weights "
+            "before the next one; only adapters are saved."
+        ),
+    )
+    parser.add_argument(
+        "--grad_accum_steps",
+        type=int,
+        default=1,
+        help="Micro-batches per optimizer step (NLP only). Effective batch = --batch_size x this.",
+    )
     parser.add_argument("--ls", type=float, default=0.0, help="Label smoothing.")
     parser.add_argument(
-        "--warmup_length",
-        type=int,
-        default=500,
+        "--warmup_ratio",
+        type=warmup_ratio,
+        default=0.1,
+        help=(
+            "Fraction of each task's schedule spent in linear warmup before the "
+            "cosine decay starts. A ratio rather than a step count because task "
+            "lengths differ by orders of magnitude, both between settings and "
+            "between tasks of one NLP benchmark."
+        ),
     )
     parser.add_argument(
         "--epochs",
@@ -80,12 +174,6 @@ def parse_arguments():
         type=lambda x: x.split(","),
         default=None,
         help="Optionally load _classifiers_, e.g. a zero shot classifier or probe or ensemble both.",
-    )
-    parser.add_argument(
-        "--save",
-        type=str,
-        default=None,
-        help="Optionally save a _classifier_, e.g. a zero shot classifier or probe.",
     )
     parser.add_argument(
         "--results_db",
@@ -117,16 +205,6 @@ def parse_arguments():
     )
     parser.add_argument("--sequential-finetuning", action="store_true")
 
-    # CL METHODS
-    parser.add_argument("--lwf_lamb", type=float, default=0.0, help="LWF lambda")
-    parser.add_argument("--ewc_lamb", type=float, default=0.0, help="EWC lambda")
-    parser.add_argument(
-        "--lamb_case",
-        type=str,
-        default="ascending",
-        choices=["ascending", "constant", "decaying", "pow"],
-    )
-
     # OTHER
     parser.add_argument("--seed", default=5, type=int)
     parser.add_argument(
@@ -137,8 +215,11 @@ def parse_arguments():
         "--taskseq_pattern",
         type=str,
         default="A",
-        choices=["A", "B", "C"],
-        help="The task sequence pattern to use.",
+        choices=["A", "B", "C", *sorted(o for orders in TASK_ORDERS.values() for o in orders)],
+        help=(
+            "The task sequence pattern to use: A/B/C for the vision and CITB "
+            "benchmarks, O-LoRA's Orders 1-3 for StdCL and 4-6 for LSB."
+        ),
     )
     parser.add_argument(
         "--gpu_id", type=int, default=0, help="GPU ID to use for training."
@@ -200,7 +281,6 @@ def parse_arguments():
             "cosine_embedded",
             "mmd_embedded",
             "ot_embedded",
-            "hpo",
         ],
         help="Similarity metric to use for masked_magmax_with_targetdata merging.",
     )
@@ -212,22 +292,33 @@ def parse_arguments():
         help="Logger mode.",
     )
     parser.add_argument(
+        "--scaling_coef",
+        type=float,
+        default=0.5,
+        help="StdCL/LSB: the merged task vector is added to the zero-shot model scaled by this.",
+    )
+    parser.add_argument(
+        "--eval_full_testsets",
+        action="store_true",
+        help=(
+            "StdCL/LSB: also score each single-model merge on every task's whole "
+            "test split and report O-LoRA's Average Accuracy."
+        ),
+    )
+    parser.add_argument(
         "--target_config",
         type=str,
         default="target_data_config",
         help="Configuration for target data.",
     )
 
-    parsed_args = parser.parse_args()
+    parsed_args = parser.parse_args(argv)
+    _resolve_training_defaults(parser, parsed_args)
     parsed_args.device = (
         f"cuda:{parsed_args.gpu_id}" if torch.cuda.is_available() else "cpu"
     )
 
     seed_everything(parsed_args.seed)
-
-    assert parsed_args.lwf_lamb == 0.0 or parsed_args.ewc_lamb == 0.0, (
-        "Lambda for LWF and EWC are mutually exclusive"
-    )
 
     if parsed_args.load is not None and len(parsed_args.load) == 1:
         parsed_args.load = parsed_args.load[0]
