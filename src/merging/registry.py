@@ -19,8 +19,8 @@ obviously — `sum` for `average`. Result files written before this change keep
 the old directory names; see the note in postprocessing/utils.py.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 from src.merging.task_vectors import (
     merge_max_abs,
@@ -47,7 +47,7 @@ class MergeSpec:
     """
 
     name: str
-    fn: Optional[Callable]
+    fn: Callable | None
     label: str
     averaged: bool = False
     needs_target_data: bool = False

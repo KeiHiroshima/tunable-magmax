@@ -85,12 +85,57 @@ TASK_ORDERS = {
         "3": ["yahoo", "amazon", "agnews", "dbpedia"],
     },
     "LSB": {
-        "4": ["MNLI", "CB", "WiC", "COPA", "QQP", "BoolQA", "RTE", "IMDB",
-              "yelp", "amazon", "SST-2", "dbpedia", "agnews", "MultiRC", "yahoo"],
-        "5": ["MultiRC", "BoolQA", "WiC", "MNLI", "CB", "COPA", "QQP", "RTE",
-              "IMDB", "SST-2", "dbpedia", "agnews", "yelp", "amazon", "yahoo"],
-        "6": ["yelp", "amazon", "MNLI", "CB", "COPA", "QQP", "RTE", "IMDB",
-              "SST-2", "dbpedia", "agnews", "yahoo", "MultiRC", "BoolQA", "WiC"],
+        "4": [
+            "MNLI",
+            "CB",
+            "WiC",
+            "COPA",
+            "QQP",
+            "BoolQA",
+            "RTE",
+            "IMDB",
+            "yelp",
+            "amazon",
+            "SST-2",
+            "dbpedia",
+            "agnews",
+            "MultiRC",
+            "yahoo",
+        ],
+        "5": [
+            "MultiRC",
+            "BoolQA",
+            "WiC",
+            "MNLI",
+            "CB",
+            "COPA",
+            "QQP",
+            "RTE",
+            "IMDB",
+            "SST-2",
+            "dbpedia",
+            "agnews",
+            "yelp",
+            "amazon",
+            "yahoo",
+        ],
+        "6": [
+            "yelp",
+            "amazon",
+            "MNLI",
+            "CB",
+            "COPA",
+            "QQP",
+            "RTE",
+            "IMDB",
+            "SST-2",
+            "dbpedia",
+            "agnews",
+            "yahoo",
+            "MultiRC",
+            "BoolQA",
+            "WiC",
+        ],
     },
 }
 
@@ -99,7 +144,9 @@ def task_order(dataset: str, pattern: str) -> list[str]:
     try:
         orders = TASK_ORDERS[dataset]
     except KeyError:
-        raise ValueError(f"Unknown NLP dataset {dataset!r}. Known: {sorted(TASK_ORDERS)}") from None
+        raise ValueError(
+            f"Unknown NLP dataset {dataset!r}. Known: {sorted(TASK_ORDERS)}"
+        ) from None
     if pattern not in orders:
         raise ValueError(
             f"--taskseq_pattern {pattern!r} is not an order of {dataset}; "
@@ -132,7 +179,12 @@ class Seq2SeqCollator:
     `targets` passes the raw label strings through for exact-match scoring.
     """
 
-    def __init__(self, tokenizer, max_source_length=MAX_SOURCE_LENGTH, max_target_length=MAX_TARGET_LENGTH):
+    def __init__(
+        self,
+        tokenizer,
+        max_source_length=MAX_SOURCE_LENGTH,
+        max_target_length=MAX_TARGET_LENGTH,
+    ):
         self.tokenizer = tokenizer
         self.max_source_length = max_source_length
         self.max_target_length = max_target_length
@@ -141,12 +193,18 @@ class Seq2SeqCollator:
         sources = [ex["source"] for ex in batch]
         targets = [ex["target"] for ex in batch]
         enc = self.tokenizer(
-            sources, max_length=self.max_source_length, truncation=True,
-            padding="longest", return_tensors="pt",
+            sources,
+            max_length=self.max_source_length,
+            truncation=True,
+            padding="longest",
+            return_tensors="pt",
         )
         tgt = self.tokenizer(
-            text_target=targets, max_length=self.max_target_length, truncation=True,
-            padding="longest", return_tensors="pt",
+            text_target=targets,
+            max_length=self.max_target_length,
+            truncation=True,
+            padding="longest",
+            return_tensors="pt",
         )
         labels = tgt["input_ids"].masked_fill(tgt["attention_mask"] == 0, -100)
         return {
@@ -162,7 +220,9 @@ def _read_json(path):
         return json.load(f)
 
 
-def load_examples(task: str, split: str, data_dir: str = OLORA_DATA_DIR) -> tuple[list[dict], list[str]]:
+def load_examples(
+    task: str, split: str, data_dir: str = OLORA_DATA_DIR
+) -> tuple[list[dict], list[str]]:
     """(examples, labels) for one split of one task. Each example is
     {"source": prompt, "target": label string}."""
     task_dir = os.path.join(data_dir, TASK_CATEGORY[task], task)
@@ -175,22 +235,32 @@ def load_examples(task: str, split: str, data_dir: str = OLORA_DATA_DIR) -> tupl
     return examples, labels
 
 
-def load_task(task: str, tokenizer, batch_size: int, data_dir: str = OLORA_DATA_DIR) -> TaskSpec:
+def load_task(
+    task: str, tokenizer, batch_size: int, data_dir: str = OLORA_DATA_DIR
+) -> TaskSpec:
     train, labels = load_examples(task, "train", data_dir)
     test, _ = load_examples(task, "test", data_dir)
     collate = Seq2SeqCollator(tokenizer)
     return TaskSpec(
         name=task,
-        train_loader=DataLoader(train, batch_size=batch_size, shuffle=True, collate_fn=collate),
-        eval_loader=DataLoader(test, batch_size=EVAL_BATCH_SIZE, shuffle=False, collate_fn=collate),
+        train_loader=DataLoader(
+            train, batch_size=batch_size, shuffle=True, collate_fn=collate
+        ),
+        eval_loader=DataLoader(
+            test, batch_size=EVAL_BATCH_SIZE, shuffle=False, collate_fn=collate
+        ),
         task_type="seq2seq",
         num_labels=len(labels),
         labels=labels,
     )
 
 
-def build_task_sequence(dataset: str, pattern: str, tokenizer_name: str, batch_size: int) -> list[TaskSpec]:
+def build_task_sequence(
+    dataset: str, pattern: str, tokenizer_name: str, batch_size: int
+) -> list[TaskSpec]:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    return [load_task(task, tokenizer, batch_size) for task in task_order(dataset, pattern)]
+    return [
+        load_task(task, tokenizer, batch_size) for task in task_order(dataset, pattern)
+    ]

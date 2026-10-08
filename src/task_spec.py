@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from torch.utils.data import DataLoader
 
@@ -18,7 +18,7 @@ class TaskSpec:
     train_loader: DataLoader
     eval_loader: DataLoader
     task_type: Literal["classification", "seq2seq"]
-    num_labels: Optional[int] = None  # classification only
+    num_labels: int | None = None  # classification only
     # StdCL/LSB: the label strings the model is asked to generate, in the
     # order the prompt's "Option:" line lists them.
-    labels: Optional[list[str]] = None
+    labels: list[str] | None = None

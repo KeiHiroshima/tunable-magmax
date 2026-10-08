@@ -26,8 +26,9 @@ zero-shot checkpoint with adapters 0..idx-1 merged in, in order (O-LoRA eq.
 """
 
 import os
+from collections.abc import Callable
 from logging import getLogger
-from typing import Any, Callable, Optional
+from typing import Any
 
 import torch
 
@@ -62,8 +63,8 @@ def finetune_task_sequence(
     *,
     build_base_model: Callable[[str], Any],
     train_task: Callable[[Any, TaskSpec, Any], Any],
-    prepare_model: Optional[Callable[[Any, TaskSpec], None]] = None,
-    lora: Optional[LoraConfig] = None,
+    prepare_model: Callable[[Any, TaskSpec], None] | None = None,
+    lora: LoraConfig | None = None,
 ) -> None:
     """Fine-tune one model across `tasks` in order, saving one checkpoint each.
 
@@ -83,13 +84,15 @@ def finetune_task_sequence(
     zeroshot_path = _ensure_zeroshot_checkpoint(args, build_base_model)
 
     # None until the first task's checkpoint exists (I4).
-    prev_ckpt: Optional[str] = None
+    prev_ckpt: str | None = None
     # --finetune_mode lora: every adapter so far, in task order.
     adapters_so_far: list[str] = []
 
     for idx, task in enumerate(tasks):  # I5
         logger.info(f"\n##### TASK {idx}: {task.name} #####")
-        ft_path = adapter_path(ckpt_dir, idx) if lora else finetuned_path(ckpt_dir, idx)  # I1
+        ft_path = (
+            adapter_path(ckpt_dir, idx) if lora else finetuned_path(ckpt_dir, idx)
+        )  # I1
 
         if os.path.exists(ft_path):
             logger.info(

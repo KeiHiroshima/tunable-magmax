@@ -25,7 +25,9 @@ from torch.utils.data import Subset
 from src.task_spec import TaskSpec
 
 
-def build_target_weights(n_tasks: int, task_idx_selected: list[int], ratio: list[float]) -> list[float]:
+def build_target_weights(
+    n_tasks: int, task_idx_selected: list[int], ratio: list[float]
+) -> list[float]:
     """The preference vector: weights_each_task[i] = the fraction of this
     target environment's traffic that comes from task i (0 for tasks not
     present in this environment). This *is* the preference vector — no

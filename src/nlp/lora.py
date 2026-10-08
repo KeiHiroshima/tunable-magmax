@@ -21,7 +21,7 @@ import math
 from dataclasses import asdict, dataclass
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,8 @@ def _target_linears(model: nn.Module, config: LoraConfig) -> list[str]:
     return [
         name
         for name, module in model.named_modules()
-        if isinstance(module, nn.Linear) and name.split(".")[-1] in config.target_modules
+        if isinstance(module, nn.Linear)
+        and name.split(".")[-1] in config.target_modules
     ]
 
 
@@ -79,7 +80,10 @@ def extract_adapter(model: nn.Module, config: LoraConfig) -> dict:
     """The adapter to save after a task: every LoRALinear's A and B, keyed by
     module name, plus the config needed to scale them back."""
     modules = {
-        name: {"A": m.lora_A.detach().cpu().clone(), "B": m.lora_B.detach().cpu().clone()}
+        name: {
+            "A": m.lora_A.detach().cpu().clone(),
+            "B": m.lora_B.detach().cpu().clone(),
+        }
         for name, m in model.named_modules()
         if isinstance(m, LoRALinear)
     }

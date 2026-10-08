@@ -49,13 +49,20 @@ def _ckpt_dir(args):
     # A LoRA run and a full run of the same model/order/seed must not share a
     # directory: they write different files, and a merge would read whichever
     # kind it expects.
-    scope = args.dataset if args.finetune_mode == "full" else f"{args.dataset}-{args.finetune_mode}"
+    scope = (
+        args.dataset
+        if args.finetune_mode == "full"
+        else f"{args.dataset}-{args.finetune_mode}"
+    )
     return checkpoint_dir(args, group="nlp_classification", scope=scope)
 
 
 def _build_tasks(args):
     return build_task_sequence(
-        args.dataset, args.taskseq_pattern, tokenizer_name=args.model, batch_size=args.batch_size
+        args.dataset,
+        args.taskseq_pattern,
+        tokenizer_name=args.model,
+        batch_size=args.batch_size,
     )
 
 
@@ -89,13 +96,20 @@ def _load_task_vectors(args, ckpt_dir, zeroshot_path, n_tasks):
     model. Under LoRA that is the running sum of adapters 0..i (or adapter i
     alone without --sequential-finetuning), over the adapted weights only."""
     if args.finetune_mode == "full":
-        return [TaskVector(zeroshot_path, finetuned_path(ckpt_dir, i)) for i in range(n_tasks)]
+        return [
+            TaskVector(zeroshot_path, finetuned_path(ckpt_dir, i))
+            for i in range(n_tasks)
+        ]
 
     adapters = [
-        torch.load(adapter_path(ckpt_dir, i), weights_only=False) for i in range(n_tasks)
+        torch.load(adapter_path(ckpt_dir, i), weights_only=False)
+        for i in range(n_tasks)
     ]
     if args.sequential_finetuning:
-        return [TaskVector(vector=adapters_to_vector(adapters[: i + 1])) for i in range(n_tasks)]
+        return [
+            TaskVector(vector=adapters_to_vector(adapters[: i + 1]))
+            for i in range(n_tasks)
+        ]
     return [TaskVector(vector=adapters_to_vector([a])) for a in adapters]
 
 
@@ -116,11 +130,15 @@ def _apply_task_vector(merged_tv, zeroshot_path, scaling_coef, device):
 
 
 def _score(model, task, dataset, tokenizer, args):
-    loader = DataLoader(dataset, batch_size=EVAL_BATCH_SIZE, collate_fn=task.eval_loader.collate_fn)
+    loader = DataLoader(
+        dataset, batch_size=EVAL_BATCH_SIZE, collate_fn=task.eval_loader.collate_fn
+    )
     return generation_correct_and_total(model, loader, tokenizer, args.device)
 
 
-def _evaluate_on_target_env(merged_model, tasks, task_idx_selected, env, tokenizer, args):
+def _evaluate_on_target_env(
+    merged_model, tasks, task_idx_selected, env, tokenizer, args
+):
     """Score merged_model on this one target environment's mixture (env.ratio
     of each selected task's own test split). Returns
     (num_data_each_task, taskwise_accuracies, overall_correct, overall_total)."""
@@ -128,7 +146,9 @@ def _evaluate_on_target_env(merged_model, tasks, task_idx_selected, env, tokeniz
     overall_correct, overall_total = 0, 0
     for i, r in zip(task_idx_selected, env.ratio):
         task = tasks[i]
-        target_subset = sample_target_eval_subset(task, round(env.num_target_data * r), env.seed)
+        target_subset = sample_target_eval_subset(
+            task, round(env.num_target_data * r), env.seed
+        )
         correct, total = _score(merged_model, task, target_subset, tokenizer, args)
         num_data_each_task[task.name] = total
         taskwise_accuracies[task.name] = correct / total
@@ -142,13 +162,19 @@ def _evaluate_on_full_testsets(merged_model, tasks, tokenizer, args, out_path):
     """O-LoRA's Average Accuracy: every task's whole test split, then the
     unweighted mean over tasks (paper §4.1.2)."""
     if has_evaluation_result(out_path, key="average_accuracy"):
-        logger.info(f"Result file {out_path} already exists. Skipping full-test-set evaluation.")
+        logger.info(
+            f"Result file {out_path} already exists. Skipping full-test-set evaluation."
+        )
         return
     taskwise = {}
     for task in tasks:
-        correct, total = _score(merged_model, task, task.eval_loader.dataset, tokenizer, args)
+        correct, total = _score(
+            merged_model, task, task.eval_loader.dataset, tokenizer, args
+        )
         taskwise[task.name] = correct / total
-        logger.info(f"{args.merge_fn} {task.name}: accuracy={taskwise[task.name]:.4f} ({total} examples)")
+        logger.info(
+            f"{args.merge_fn} {task.name}: accuracy={taskwise[task.name]:.4f} ({total} examples)"
+        )
     result = {
         "taskwise_accuracies": taskwise,
         "average_accuracy": sum(taskwise.values()) / len(taskwise),
@@ -180,7 +206,10 @@ def merge_and_evaluate(args):
         nonlocal fixed_merged_model
         if fixed_merged_model is None:
             fixed_merged_model = _apply_task_vector(
-                apply_merge(spec, task_vectors), zeroshot_path, args.scaling_coef, args.device
+                apply_merge(spec, task_vectors),
+                zeroshot_path,
+                args.scaling_coef,
+                args.device,
             )
         return fixed_merged_model
 
@@ -198,24 +227,36 @@ def merge_and_evaluate(args):
                 results_by_target[env.target_id] = json.load(f)
             continue
 
-        task_idx_selected = select_target_tasks(len(tasks), env.n_tasks_fetched, env.seed)
+        task_idx_selected = select_target_tasks(
+            len(tasks), env.n_tasks_fetched, env.seed
+        )
 
         if spec.needs_target_data:
-            weights_each_task = build_target_weights(len(tasks), task_idx_selected, env.ratio)
+            weights_each_task = build_target_weights(
+                len(tasks), task_idx_selected, env.ratio
+            )  # weight is obviously just the ratio of each task in the target enironment which is given in task incremental learning
             merged_tv, num_unaligned, num_params_all = mask_and_merge_by_weights(
-                task_vectors, weights_each_task, seed=derive_seed(args.seed, env.target_id)
+                task_vectors,
+                weights_each_task,
+                seed=derive_seed(args.seed, env.target_id),
             )
-            merged_model = _apply_task_vector(merged_tv, zeroshot_path, args.scaling_coef, args.device)
+            merged_model = _apply_task_vector(
+                merged_tv, zeroshot_path, args.scaling_coef, args.device
+            )
         else:
             merged_model = _fixed_merged_model()
 
         # Exact micro-average: sum correct / sum total over the actual
         # sampled examples, not a mean of per-task ratios/accuracies.
-        num_data_each_task, taskwise_accuracies, overall_correct, overall_total = _evaluate_on_target_env(
-            merged_model, tasks, task_idx_selected, env, tokenizer, args
+        num_data_each_task, taskwise_accuracies, overall_correct, overall_total = (
+            _evaluate_on_target_env(
+                merged_model, tasks, task_idx_selected, env, tokenizer, args
+            )
         )
         overall_accuracy = overall_correct / overall_total
-        logger.info(f"{args.merge_fn} target {env.target_id}: overall_accuracy={overall_accuracy:.4f}")
+        logger.info(
+            f"{args.merge_fn} target {env.target_id}: overall_accuracy={overall_accuracy:.4f}"
+        )
 
         result = {
             "target_id": env.target_id,
@@ -246,7 +287,10 @@ def merge_and_evaluate(args):
     # closest counterpart).
     if args.eval_full_testsets and not spec.needs_target_data:
         _evaluate_on_full_testsets(
-            _fixed_merged_model(), tasks, tokenizer, args,
+            _fixed_merged_model(),
+            tasks,
+            tokenizer,
+            args,
             os.path.join(out_dir, f"full_testsets_seed{args.seed}.json"),
         )
 
