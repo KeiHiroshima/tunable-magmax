@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from torch.utils.data import DataLoader
 
@@ -8,14 +8,17 @@ from torch.utils.data import DataLoader
 class TaskSpec:
     """Benchmark-agnostic unit handed to the CL training loop.
 
-    LSB tasks are classification (a fresh linear head per task); CITB/SuperNI
-    tasks are seq2seq (no head to swap, decoder produces the vocabulary
-    directly). `task_type` lets the training loop dispatch between the two
-    without either benchmark module depending on the other.
+    Both NLP benchmark families are seq2seq: StdCL/LSB (O-LoRA's T5 setting)
+    generate a label string, CITB/SuperNI a free-form response. `task_type`
+    is kept so a loop can still dispatch on it without either benchmark module
+    depending on the other.
     """
 
     name: str
     train_loader: DataLoader
     eval_loader: DataLoader
     task_type: Literal["classification", "seq2seq"]
-    num_labels: Optional[int] = None  # classification only
+    num_labels: int | None = None  # classification only
+    # StdCL/LSB: the label strings the model is asked to generate, in the
+    # order the prompt's "Option:" line lists them.
+    labels: list[str] | None = None

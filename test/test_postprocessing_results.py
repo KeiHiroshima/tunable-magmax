@@ -87,6 +87,34 @@ def test_nlp_result_path_bakes_seed_into_the_checkpoint_directory(tmp_path):
     assert "seed:4" in path_seed4 and path_seed4.endswith("average/target1_seed4.json")
 
 
+def test_nlp_result_path_finds_lora_runs_under_their_own_directory(tmp_path):
+    """src/backends/nlp_classification_backend.py::_ckpt_dir puts a
+    --finetune_mode lora run under `{dataset}-lora`; the reader must agree."""
+    kwargs = dict(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4", base_dir=str(tmp_path))
+
+    full = nlp_result_path(**kwargs)("magmax", 1, 3)
+    lora = nlp_result_path(finetune_mode="lora", **kwargs)("magmax", 1, 3)
+
+    assert "/nlp_classification/LSB/" in full
+    assert "/nlp_classification/LSB-lora/" in lora
+
+
+def test_nlp_result_path_agrees_with_the_backend(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    import src.paths
+    from src.backends import nlp_classification_backend
+
+    monkeypatch.setattr(src.paths, "BASE_DIR", str(tmp_path))
+    for mode in ("full", "lora"):
+        args = Namespace(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4",
+                         seed=3, sequential_finetuning=True, finetune_mode=mode)
+        expected = f"{nlp_classification_backend._ckpt_dir(args)}/magmax/target1_seed3.json"
+        path_fn = nlp_result_path(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4",
+                                  base_dir=str(tmp_path), finetune_mode=mode)
+        assert path_fn("magmax", 1, 3) == expected
+
+
 # --- load_overall_accuracy / build_comparison_table -------------------------
 
 

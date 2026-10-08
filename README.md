@@ -45,7 +45,7 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
 | `--dataset` | Backend | Backbone |
 |---|---|---|
 | `CIFAR100`, `ImageNetR` | `vision_backend.py` | CLIP ViT |
-| `LSB` | `nlp_classification_backend.py` | BERT + per-task head |
+| `StdCL`, `LSB` | `nlp_classification_backend.py` | T5 (text-to-text, O-LoRA's setting) |
 | `CITB19`, `CITB38` | `nlp_seq2seq_backend.py` | BERT2BERT |
 
 ### Implementation flow
@@ -63,18 +63,24 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
    `--similarity_metric`) and merges via `mask_and_merge_by_weights`
    (`src/merging/task_vectors.py`).
 
-**NLP classification (`nlp_classification_backend.py`, `LSB`)**
+**NLP classification (`nlp_classification_backend.py`, `StdCL`/`LSB`)**
 1. `finetune(args)` → `src/nlp/finetune_nlp.py::finetune_task_sequence`: the
    same fine-tuning loop as vision (skip-if-exists, chain from the previous
-   task under `--sequential-finetuning`), driving a shared `BertClassifier`
-   with a fresh head per task instead of a CLIP ViT.
+   task under `--sequential-finetuning`), driving T5 as a text-to-text model
+   (every task generates its label string, so there is no per-task head).
+   `--finetune_mode full` saves a `finetuned_{i}.pt` per task;
+   `--finetune_mode lora` saves only a LoRA `adapter_{i}.pt` per task
+   (`src/nlp/lora.py`), and each task starts from the zero-shot model with
+   every earlier adapter merged in.
 2. `merge_and_evaluate(args)` mirrors vision's `evaluate_merged_fts_on_target_data`
    step for step — same `--target_config` loop, same `MergeSpec.needs_target_data`
    branch, every `--merge_fn` scored against every target environment — but
-   needs no meta split or similarity estimate: LSB's tasks are already
+   needs no meta split or similarity estimate: the tasks are already
    separate datasets, so `masked_magmax_with_targetdata`'s preference vector
    *is* the target environment's own known mixing ratio
-   (`src/nlp/target_data.py::build_target_weights`).
+   (`src/nlp/target_data.py::build_target_weights`). Under LoRA the task
+   vectors are rebuilt from the adapters. Scoring is exact match on the
+   generated label.
 
 **NLP seq2seq (`nlp_seq2seq_backend.py`, `CITB19`/`CITB38`)**
 Same fine-tuning loop, but `merge_and_evaluate` supports the baselines only
@@ -163,7 +169,7 @@ uv run python merge_for_targetdata.py \
 
 | `--merge_fn` | Method | NLP support |
 |---|---|---|
-| `masked_magmax_with_targetdata` | **Tunable MAGMAX (proposed)** | `LSB` only |
+| `masked_magmax_with_targetdata` | **Tunable MAGMAX (proposed)** | `StdCL`/`LSB` only |
 | `magmax` | MAGMAX | yes |
 | `ties` | TIES-Merging | yes |
 | `average` | Model Soup | yes |
@@ -197,7 +203,7 @@ draws of that kind, each identified by `target_id` and sampled with its own
 | Config | Contents |
 |---|---|
 | `target_data_config` | 26 environments: 5 mixing ratios x 5 seeds, plus one all-tasks entry |
-| `target_data_config_lsb` | the same shape, for LSB |
+| `target_data_config_lsb` | the same shape, for StdCL and LSB (2-task, 3-task and all-task mixtures fit both) |
 | `target_data_config_split{5,20,50}` | sweeps over how many tasks a mixture draws from; sized per `--n_splits` |
 | `target_data_config_smoke` | 3 environments, for a quick end-to-end check |
 
@@ -232,7 +238,7 @@ one JSON per target environment for every `--merge_fn` (baselines included —
 see below):
 
 ```
-.../ft-pattern_{p}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
+.../nlp_classification/{dataset}[-lora]/ft-pattern_{p}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
 ```
 
 Every method's file holds `overall_accuracy`, `taskwise_accuracies`,
@@ -241,6 +247,11 @@ the top level — a flatter shape than vision's, with no `average_accuracy` or
 nested `target_dataset_info`. Only `masked_magmax_with_targetdata`'s file also
 holds `weights_each_task` (the preference vector) and `num_unaligned` /
 `num_params_all`.
+
+With `--eval_full_testsets`, every method that yields a single model (all
+but `masked_magmax_with_targetdata`) is also scored on every task's whole
+test split, and `{merge_fn}/full_testsets_seed{s}.json` holds its
+`taskwise_accuracies` and `average_accuracy` — O-LoRA's Average Accuracy.
 
 ### Combined run
 
@@ -257,10 +268,16 @@ bash scripts/vision/finetune_merge.sh
 | `--n_splits` | 2 | vision only: how many class-incremental tasks |
 | `--split_strategy` | — | vision only; `class` for the paper's setting |
 | `--sequential-finetuning` | off | continue each task from the previous one. **The paper's setting** — without it every task restarts from the pre-trained model |
-| `--taskseq_pattern` | `A` | fixed task order; `B`/`C` are deterministic reshuffles |
+| `--taskseq_pattern` | `A` | fixed task order; `B`/`C` are deterministic reshuffles. StdCL/LSB take O-LoRA's orders instead (`1`-`3` / `4`-`6`) |
 | `--epochs` | 10 | |
 | `--batch_size` | 128 | the paper's value. **ViT-B/16 at 128 needs more than 16 GB** — pass `--batch_size 32` on a smaller card |
-| `--lr` | 1e-5 | |
+| `--lr` | 1e-5 | StdCL/LSB: 1e-4 under `--finetune_mode full`, 1e-3 under `lora` |
+| `--wd` | 0.1 | StdCL/LSB: 0 |
+| `--lr_schedule` | `cosine` | StdCL/LSB: `constant` (no warmup) |
+| `--finetune_mode` | `full` | StdCL/LSB only: `full` or `lora` |
+| `--grad_accum_steps` | 1 | NLP only: micro-batches per optimizer step |
+| `--scaling_coef` | 0.5 | StdCL/LSB: scale of the merged task vector |
+| `--eval_full_testsets` | off | StdCL/LSB: also report Average Accuracy (see above) |
 | `--warmup_ratio` | 0.1 | see below |
 | `--seed` | 5 | the paper uses 3/4/5 |
 | `--num_train_data_each_task` | — | **required when merging**: how many training examples per task the similarity is measured against |
@@ -280,8 +297,7 @@ setting, so there is normally no reason to pass it.
 
 It is a fraction rather than a step count because task lengths vary by orders of
 magnitude — 40 optimizer steps per task for ImageNet-R-50 against 790 for
-CIFAR-100-5, and within one LSB run from 80 steps for `cb` to 203,000 for
-`yelp`. A step count that suits one of those covers another's whole schedule,
+CIFAR-100-5. A step count that suits one of those covers another's whole schedule,
 which leaves the learning rate ramping linearly from zero, never reaching `--lr`
 and never decaying. A ratio also rescales by itself when `--epochs` or
 `--batch_size` change.
@@ -289,43 +305,78 @@ and never decaying. A ratio also rescales by itself when `--epochs` or
 Values outside `(0, 1)` are rejected at the command line, since a ratio of 1 or
 more is exactly the broken schedule described above.
 
+StdCL/LSB default to `--lr_schedule constant`, following O-LoRA, where
+`--warmup_ratio` has no effect.
+
 
 ## NLP tasks
 
 | `--dataset` | Benchmark | Backbone | Proposed method |
 |---|---|---|---|
-| `LSB` | Long Sequence Benchmark — 15 text classification tasks | `BertClassifier` | supported |
+| `StdCL` | O-LoRA's standard CL benchmark — 4 text classification tasks (Orders 1-3) | T5 | supported |
+| `LSB` | O-LoRA's long sequence benchmark — 15 text classification tasks (Orders 4-6) | T5 | supported |
 | `CITB19` | CITB InstrDialog — 19 instruction-following tasks | BERT2BERT | not yet |
 | `CITB38` | CITB InstrDialog++ — 38 tasks | BERT2BERT | not yet |
 
+### StdCL / LSB: O-LoRA's T5 setting
+
+The setting follows the T5 experiments of O-LoRA (Wang et al., *Orthogonal
+Subspace Learning for Language Model Continual Learning*, Findings of EMNLP
+2023) and its repository (github.com/cmnfriend/O-LoRA):
+
+* **Data** — O-LoRA's preprocessed `CL_Benchmark`, read from
+  `MAGMAX_OLORA_DATA_DIR` (default `~/O-LoRA/CL_Benchmark`). The whole
+  `train.json` (1000 examples per class) trains each task; `test.json`
+  evaluates it.
+* **Prompt** — O-LoRA's instruction format, `Task:` / `Dataset:` prefixes
+  included; the model generates the label string, scored by exact match.
+* **Orders** — the paper's Table 7: `--taskseq_pattern 1`/`2`/`3` for
+  `StdCL`, `4`/`5`/`6` for `LSB`.
+* **Training** — 1 epoch, AdamW at a constant learning rate, no weight decay,
+  dropout 0.1, batch 64 (the scripts use `--batch_size 8 --grad_accum_steps 8`
+  on one GPU), fp32.
+* **Models** — `t5-base` is fully fine-tuned (`--finetune_mode full`, lr
+  1e-4, shared embedding frozen). `t5-large` trains a LoRA adapter per task
+  (`--finetune_mode lora`, lr 1e-3, r=8, alpha=32 on the q/v projections),
+  merged into the weights before the next task. Only the adapters are saved
+  (~9 MB per task) and the merge step rebuilds every task's model from them.
+
+The scripts pick `--finetune_mode` from `model` and sweep order x seed:
+
 ```bash
-bash scripts/nlp/finetune.sh             # edit the variables at the top first
+bash scripts/nlp/finetune.sh             # model=t5-base dataset=StdCL task_seq=1 seed=3
 bash scripts/nlp/merge.sh
 # or, combined:
 bash scripts/nlp/finetune_merge.sh
 # every merge_fn for one fine-tuned run (variables overridable as for vision):
-seed=3 bash scripts/nlp/merge_comparison.sh
-# every seed (3/4/5); LSB has no n_splits, so seed is the only axis:
-bash scripts/nlp/finetune_all.sh
-bash scripts/nlp/merge_comparison_all.sh
+model=t5-large dataset=LSB task_seq=4 seed=3 bash scripts/nlp/merge_comparison.sh
+# every order x seed (3/4/5) of one benchmark:
+model=t5-large dataset=LSB bash scripts/nlp/finetune_all.sh
+model=t5-large dataset=LSB bash scripts/nlp/merge_comparison_all.sh
 ```
+
+The NLP scripts export `TORCH_DISABLE_NATIVE_JIT=1`: torch 2.14 otherwise
+JIT-compiles Triton kernels for some ops T5's `generate()` uses, which fails
+on machines without the Python development headers. Set it yourself when
+running the entry points directly.
 
 `merge_comparison.sh` has no similarity-metric loop, since the NLP backend
 ignores `--similarity_metric`. As for vision, a target environment whose
 results file already holds an `overall_accuracy` is skipped, so re-running any
 of these resumes where it stopped. Each method's stdout is appended to
-`outs/{model}/nlp_classification/{dataset}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`.
+`outs/{model}/nlp_classification/{dataset}-{finetune_mode}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`.
 
 Or directly:
 
 ```bash
-uv run python finetune_splitted.py \
-    --model bert-base-uncased --dataset LSB \
-    --epochs 3 --taskseq_pattern A --seed 3 --sequential-finetuning
+TORCH_DISABLE_NATIVE_JIT=1 uv run python finetune_splitted.py \
+    --model t5-large --dataset LSB --finetune_mode lora \
+    --epochs 1 --batch_size 8 --grad_accum_steps 8 \
+    --taskseq_pattern 4 --seed 3 --sequential-finetuning
 
-uv run python merge_for_targetdata.py \
-    --model bert-base-uncased --dataset LSB \
-    --epochs 3 --taskseq_pattern A --seed 3 --sequential-finetuning \
+TORCH_DISABLE_NATIVE_JIT=1 uv run python merge_for_targetdata.py \
+    --model t5-large --dataset LSB --finetune_mode lora \
+    --epochs 1 --taskseq_pattern 4 --seed 3 --sequential-finetuning \
     --merge_fn masked_magmax_with_targetdata \
     --target_config target_data_config_lsb --num_target_data 200
 ```
@@ -334,11 +385,11 @@ See "Implementation flow" and "Where results go" above for how `merge_and_evalua
 scores every `--merge_fn` (baselines included) against every target
 environment, without needing vision's similarity estimate.
 
-The seq2seq backends (`CITB19`/`CITB38`) evaluate with generation loss rather
-than accuracy, and support the baselines only.
+### CITB
 
-`--taskseq_pattern` (`A`/`B`/`C`) selects a fixed task order, defined in
-`TASK_ORDER_PATTERNS` in `src/nlp/long_sequence_benchmark.py` /
+The seq2seq backends (`CITB19`/`CITB38`) evaluate with generation loss rather
+than accuracy, and support the baselines only. `--taskseq_pattern`
+(`A`/`B`/`C`) selects a fixed task order, defined in `TASK_ORDER_PATTERNS` in
 `src/nlp/citb_superni.py`.
 
 ## Tests
@@ -352,7 +403,8 @@ dataset: they run the real code against synthetic task vectors and stand-in
 datasets, and cover the checkpoint layout, the merge registry, the learning-rate
 schedule, target-environment construction, and the fine-tuning loop's
 resume behaviour. A handful (`test/test_nlp_*.py`) do download a model and a few
-datasets on first run, cached under `datasets/hf_cache`.
+datasets on first run, cached under `datasets/hf_cache`; the StdCL/LSB data
+tests are skipped when O-LoRA's `CL_Benchmark` is not present.
 
 
 ## Third-Party Code

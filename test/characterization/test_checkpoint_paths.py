@@ -61,6 +61,7 @@ def _nlp_args(dataset, **overrides):
         taskseq_pattern=PATTERN,
         seed=SEED,
         sequential_finetuning=True,
+        finetune_mode="full",
     )
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -145,18 +146,20 @@ def test_vision_merge_reads_exactly_what_vision_finetune_wrote(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "dataset,family_dir",
+    "dataset,finetune_mode,family_dir,scope",
     [
-        ("LSB", "nlp_classification"),
-        ("CITB19", "nlp_seq2seq"),
-        ("CITB38", "nlp_seq2seq"),
+        ("StdCL", "full", "nlp_classification", "StdCL"),
+        ("LSB", "full", "nlp_classification", "LSB"),
+        ("LSB", "lora", "nlp_classification", "LSB-lora"),
+        ("CITB19", "full", "nlp_seq2seq", "CITB19"),
+        ("CITB38", "full", "nlp_seq2seq", "CITB38"),
     ],
 )
-def test_nlp_checkpoint_dirs(dataset, family_dir):
+def test_nlp_checkpoint_dirs(dataset, finetune_mode, family_dir, scope):
     from src.backends.registry import resolve_backend
 
     backend = resolve_backend(dataset)
-    args = _nlp_args(dataset)
+    args = _nlp_args(dataset, finetune_mode=finetune_mode)
 
     assert backend._ckpt_dir(args) == os.path.join(
         BASE_DIR,
@@ -164,7 +167,7 @@ def test_nlp_checkpoint_dirs(dataset, family_dir):
         args.model,
         "sequential_finetuning",
         family_dir,
-        dataset,
+        scope,
         EXPECTED_RUN_DIR,
     )
 

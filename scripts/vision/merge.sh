@@ -22,7 +22,7 @@ num_train_data_each_task=${num_train_data_each_task:-500}
 merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune magmax ties average random_mix masked_magmax_with_targetdata
 similarity_metric=${similarity_metric:-labels}       # labels ot_embedded cosine_embedded mmd_embedded (masked_magmax_with_targetdata only)
 target_config=${target_config:-target_data_config}   # target_data_config target_data_config_split{5,20,50}
-dir_name=${dir_name:-DEFAULT_NAME}
+dir_name=${dir_name:-reproducing}
 
 
 if [ $n_splits -eq 5 ]; then

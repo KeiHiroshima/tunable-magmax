@@ -4,7 +4,7 @@ import torch
 
 from src.datasets.common import maybe_dictionarize
 from src.modeling import ImageClassifier
-from src.utils import LabelSmoothing, cosine_lr
+from src.utils import LabelSmoothing, constant_lr, cosine_lr
 
 
 def setup_model_for_training(image_encoder, classification_head, args, freeze_lang=False):
@@ -32,7 +32,13 @@ def build_scheduler(optimizer, args, total_steps):
     and never reaching --lr, let alone decaying. A fraction below 1 cannot do
     that whatever the task size, and rescales by itself when --epochs or
     --batch_size change.
+
+    `--lr_schedule constant` (the StdCL/LSB default, following O-LoRA's T5
+    runs) holds --lr for the whole task with no warmup. Callers that build
+    `args` by hand without the field get the cosine schedule.
     """
+    if getattr(args, "lr_schedule", "cosine") == "constant":
+        return constant_lr(optimizer, args.lr)
     warmup_steps = max(1, int(args.warmup_ratio * total_steps))
     return cosine_lr(optimizer, args.lr, warmup_steps, total_steps)
 

@@ -49,31 +49,41 @@ MERGE_ARGV = [
     "--gpu_id", "0",
 ]
 
-# scripts/nlp/finetune.sh with its committed defaults.
+# scripts/nlp/finetune.sh with its committed defaults (model=t5-base, so
+# finetune_mode=full and no --lr).
 NLP_FINETUNE_ARGV = [
     "finetune_splitted.py",
-    "--model", "bert-base-uncased",
-    "--dataset", "LSB",
-    "--epochs", "3",
+    "--model", "t5-base",
+    "--dataset", "StdCL",
+    "--finetune_mode", "full",
+    "--epochs", "1",
+    "--batch_size", "8",
+    "--grad_accum_steps", "8",
     "--sequential-finetuning",
     "--seed", "3",
-    "--taskseq_pattern", "A",
+    "--taskseq_pattern", "1",
+    "--gpu_id", "0",
     "--wandb_entity_name", "keihiroshima",
 ]
+
+# scripts/nlp/finetune.sh with `lr` set in the environment.
+NLP_FINETUNE_LR_ARGV = NLP_FINETUNE_ARGV + ["--lr", "3e-4"]
 
 # scripts/nlp/merge.sh with its committed defaults.
 NLP_MERGE_ARGV = [
     "merge_for_targetdata.py",
-    "--model", "bert-base-uncased",
-    "--dataset", "LSB",
-    "--epochs", "3",
+    "--model", "t5-base",
+    "--dataset", "StdCL",
+    "--finetune_mode", "full",
+    "--epochs", "1",
     "--sequential-finetuning",
-    "--taskseq_pattern", "A",
+    "--taskseq_pattern", "1",
     "--seed", "3",
     "--gpu_id", "0",
     "--merge_fn", "masked_magmax_with_targetdata",
     "--target_config", "target_data_config_lsb",
     "--num_target_data", "200",
+    "--eval_full_testsets",
 ]
 
 
@@ -108,11 +118,60 @@ def test_merge_script_argv_parses():
 def test_nlp_finetune_script_argv_parses():
     args = _parse(NLP_FINETUNE_ARGV)
 
-    assert args.model == "bert-base-uncased"
-    assert args.dataset == "LSB"
+    assert args.model == "t5-base"
+    assert args.dataset == "StdCL"
+    assert args.finetune_mode == "full"
     assert args.sequential_finetuning is True
-    assert args.taskseq_pattern == "A"
+    assert args.taskseq_pattern == "1"
     assert args.seed == 3
+    assert (args.batch_size, args.grad_accum_steps) == (8, 8)
+    # O-LoRA's T5 setting, full-fine-tuning learning rate.
+    assert (args.lr, args.wd, args.lr_schedule) == (1e-4, 0.0, "constant")
+
+
+def test_nlp_lora_run_defaults_to_olora_learning_rate():
+    """scripts/nlp/finetune.sh switches t5-large to --finetune_mode lora and
+    passes no --lr: the learning rate must then follow the mode."""
+    argv = [a if a != "full" else "lora" for a in NLP_FINETUNE_ARGV]
+    argv[argv.index("t5-base")] = "t5-large"
+    args = _parse(argv)
+
+    assert args.finetune_mode == "lora"
+    assert (args.lr, args.wd, args.lr_schedule) == (1e-3, 0.0, "constant")
+
+
+def test_explicit_lr_overrides_the_nlp_default():
+    args = _parse(NLP_FINETUNE_LR_ARGV)
+
+    assert args.lr == 3e-4
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [FINETUNE_ARGV, MERGE_ARGV,
+     ["x", "--model", "bert-base-uncased", "--dataset", "CITB19"]],
+    ids=["vision-finetune", "vision-merge", "citb"],
+)
+def test_non_t5_pipelines_keep_their_training_defaults(argv):
+    """The StdCL/LSB defaults are resolved per dataset; vision and CITB must
+    still get exactly the values they had before those benchmarks existed."""
+    args = _parse(argv)
+
+    assert (args.lr, args.wd, args.lr_schedule, args.finetune_mode) == (1e-5, 0.1, "cosine", "full")
+    assert args.grad_accum_steps == 1
+
+
+@pytest.mark.parametrize(
+    "dataset,pattern", [("StdCL", "4"), ("LSB", "1"), ("LSB", "A")]
+)
+def test_nlp_order_must_belong_to_the_benchmark(dataset, pattern):
+    with pytest.raises(SystemExit):
+        _parse(["x", "--model", "t5-base", "--dataset", dataset, "--taskseq_pattern", pattern])
+
+
+def test_lora_is_rejected_outside_stdcl_and_lsb():
+    with pytest.raises(SystemExit):
+        _parse(FINETUNE_ARGV + ["--finetune_mode", "lora"])
 
 
 def test_nlp_merge_script_argv_parses():
@@ -122,6 +181,8 @@ def test_nlp_merge_script_argv_parses():
     assert args.target_config == "target_data_config_lsb"
     assert args.num_target_data == 200
     assert args.gpu_id == 0
+    assert args.eval_full_testsets is True
+    assert args.scaling_coef == 0.5
 
 
 def test_device_is_derived_from_gpu_id():
@@ -131,12 +192,15 @@ def test_device_is_derived_from_gpu_id():
     assert args.device in ("cpu",) or args.device.startswith("cuda:")
 
 
-@pytest.mark.parametrize("dataset", ["LSB", "CITB19", "CITB38"])
-def test_nlp_datasets_parse_and_resolve_to_a_backend(dataset):
+@pytest.mark.parametrize(
+    "dataset,pattern", [("StdCL", "1"), ("LSB", "4"), ("CITB19", "A"), ("CITB38", "A")]
+)
+def test_nlp_datasets_parse_and_resolve_to_a_backend(dataset, pattern):
     from src.backends.registry import resolve_backend
 
     args = _parse(
-        ["merge_for_targetdata.py", "--model", "bert-base-uncased", "--dataset", dataset]
+        ["merge_for_targetdata.py", "--model", "t5-base", "--dataset", dataset,
+         "--taskseq_pattern", pattern]
     )
     backend = resolve_backend(args.dataset)
 
@@ -256,7 +320,10 @@ def test_vision_finetune_no_longer_discards_these_flags(flag, value, monkeypatch
 def test_no_script_uses_a_flag_the_tests_do_not_cover():
     """Closes the loop: if a shell script grows a new flag, this fails until
     the argv fixtures above are updated to match."""
-    covered = set(FINETUNE_ARGV) | set(MERGE_ARGV) | set(NLP_FINETUNE_ARGV) | set(NLP_MERGE_ARGV)
+    covered = (
+        set(FINETUNE_ARGV) | set(MERGE_ARGV)
+        | set(NLP_FINETUNE_ARGV) | set(NLP_FINETUNE_LR_ARGV) | set(NLP_MERGE_ARGV)
+    )
 
     for script in sorted(SCRIPTS_DIR.glob("**/*.sh")):
         flags = set(re.findall(r"(?<![\w-])--[a-z][a-z0-9_-]*", script.read_text()))

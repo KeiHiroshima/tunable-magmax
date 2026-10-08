@@ -165,11 +165,12 @@ def nlp_result_path(
     taskseq_pattern: str,
     sequential_finetuning: bool = True,
     base_dir: str | None = None,
+    finetune_mode: str = "full",
 ) -> ResultPath:
     """A ResultPath for the NLP layout:
     `{ckpt_dir}/{merge_fn}/target{id}_seed{s}.json`
     (src/backends/nlp_classification_backend.py::merge_and_evaluate). The
-    competitor key *is* the --merge_fn value — LSB has no similarity_metric
+    competitor key *is* the --merge_fn value — StdCL/LSB have no similarity_metric
     variants to disambiguate between.
 
     Unlike vision's --results_db (one fixed, seed-independent root), NLP
@@ -180,15 +181,18 @@ def nlp_result_path(
     the analysis notebooks stay free of this project's ML dependencies (see
     test/characterization/test_merge_registry.py::
     test_postprocessing_labels_stay_in_sync_with_the_registry). If that
-    template changes, this needs updating too.
+    template changes, this needs updating too — including the `-lora` suffix
+    src/backends/nlp_classification_backend.py::_ckpt_dir puts on the dataset
+    directory of a --finetune_mode lora run.
     """
     base_dir = base_dir or os.environ.get("MAGMAX_BASE_DIR", "YOUR_BASE_DIR_FOR_CHECKPOINTS")
     sequential = "sequential_finetuning" if sequential_finetuning else ""
+    scope = dataset if finetune_mode == "full" else f"{dataset}-{finetune_mode}"
 
     def _path(key: str, target_id: int, seed: int) -> str:
         run_dir = f"ft-pattern_{taskseq_pattern}-epochs-{epochs}-seed:{seed}"
         ckpt_dir = os.path.join(
-            base_dir, "checkpoints", model, sequential, "nlp_classification", dataset, run_dir
+            base_dir, "checkpoints", model, sequential, "nlp_classification", scope, run_dir
         )
         return f"{ckpt_dir}/{key}/target{target_id}_seed{seed}.json"
 

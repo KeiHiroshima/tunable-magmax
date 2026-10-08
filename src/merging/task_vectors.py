@@ -238,7 +238,9 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task, *, seed):
                                 )
 
                                 if len(candidates_indices) > num_needed:
-                                    perm_ = torch.randperm(len(candidates_indices), generator=generator)
+                                    perm_ = torch.randperm(
+                                        len(candidates_indices), generator=generator
+                                    )
                                     selected_indices = candidates_indices[
                                         perm_[:num_needed]
                                     ].tolist()
@@ -276,6 +278,7 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task, *, seed):
                         ).difference(
                             pool_selected_indices,
                         )
+
                         for j, (num_aligned, num_needed) in enumerate(
                             zip(num_actual_aligned, num_elements_needed)
                         ):
@@ -398,9 +401,7 @@ def merge_max_abs_masked_with_targetdata(
                     device=args.device,
                 )
             else:
-                logger.debug(
-                    f"Using {similarity_metric_key} similarity with raw data."
-                )
+                logger.debug(f"Using {similarity_metric_key} similarity with raw data.")
                 feature_cost = None
 
             similarity_score = distance_metric[similarity_metric_key](

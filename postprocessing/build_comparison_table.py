@@ -19,7 +19,7 @@ Vision example (reproduces one of make_tables.ipynb's tables):
 
 NLP example:
     uv run python postprocessing/build_comparison_table.py --backend nlp \\
-        --model bert-base-uncased --dataset LSB --epochs 3 --taskseq_pattern A \\
+        --model t5-large --finetune_mode lora --dataset LSB --epochs 1 --taskseq_pattern 4 \\
         --target_config target_data_config_lsb --seeds 3,4,5 \\
         --competitors finetune,random_mix,average,ties,magmax,masked_magmax_with_targetdata
 """
@@ -59,10 +59,11 @@ def _parse_args():
     p.add_argument("--lambda_", type=float, default=0.5, help="vision: the --coeff/lambda merges were run with")
 
     # nlp
-    p.add_argument("--model", default="bert-base-uncased")
-    p.add_argument("--dataset", default="LSB")
-    p.add_argument("--epochs", type=int)
-    p.add_argument("--taskseq_pattern", default="A")
+    p.add_argument("--model", default="t5-base")
+    p.add_argument("--finetune_mode", default="full", choices=["full", "lora"])
+    p.add_argument("--dataset", default="StdCL", choices=["StdCL", "LSB"])
+    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--taskseq_pattern", default="1", help="nlp: O-LoRA order, 1-3 for StdCL, 4-6 for LSB")
     p.add_argument(
         "--sequential_finetuning",
         action=argparse.BooleanOptionalAction,
@@ -76,7 +77,7 @@ def _parse_args():
 def _default_competitors(backend: str) -> dict[str, str]:
     if backend == "vision":
         return dict(COMPETITOR_ALL_DICT)
-    # LSB has no similarity_metric variants of the proposed method — only the
+    # StdCL/LSB have no similarity_metric variants of the proposed method — only the
     # plain "masked_magmax_with_targetdata" key exists for it.
     return {k: v for k, v in COMPETITOR_ALL_DICT.items() if "-" not in k}
 
@@ -95,6 +96,7 @@ def _build_path_fn(args):
         epochs=args.epochs,
         taskseq_pattern=args.taskseq_pattern,
         sequential_finetuning=args.sequential_finetuning,
+        finetune_mode=args.finetune_mode,
     )
 
 

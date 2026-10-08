@@ -22,7 +22,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 README = (REPO_ROOT / "README.md").read_text()
 
 # Rows of the "--merge_fn" table: | `name` | description | NLP support |
-MERGE_TABLE_ROW = re.compile(r"^\| `([a-z_]+)` \| (.+?) \| (yes|`LSB` only|not yet) \|$", re.M)
+MERGE_TABLE_ROW = re.compile(
+    r"^\| `([a-z_]+)` \| (.+?) \| (yes|`StdCL`/`LSB` only|not yet) \|$", re.M
+)
 
 
 def _merge_table():
@@ -39,7 +41,7 @@ def test_merge_table_lists_every_registered_method():
 def test_merge_table_reports_nlp_support_correctly():
     """`masked_magmax_with_targetdata` is the subtle one: the registry marks it
     nlp_supported=False because it cannot go through the plain
-    task_vectors -> TaskVector path, but the LSB backend implements it with a
+    task_vectors -> TaskVector path, but the StdCL/LSB backend implements it with a
     flow of its own (branching on spec.needs_target_data, mirroring vision's
     src/eval.py). Documenting it as "vision-only" would be wrong."""
     table = _merge_table()
@@ -52,7 +54,7 @@ def test_merge_table_reports_nlp_support_correctly():
 
     lsb = inspect.getsource(nlp_classification_backend)
     seq2seq = inspect.getsource(nlp_seq2seq_backend)
-    assert table["masked_magmax_with_targetdata"] == "`LSB` only"
+    assert table["masked_magmax_with_targetdata"] == "`StdCL`/`LSB` only"
     assert "needs_target_data" in lsb
     assert "needs_target_data" not in seq2seq
 
@@ -187,6 +189,7 @@ def test_documented_environment_count():
     [
         ("CIFAR100", "vision_backend"),
         ("ImageNetR", "vision_backend"),
+        ("StdCL", "nlp_classification_backend"),
         ("LSB", "nlp_classification_backend"),
         ("CITB19", "nlp_seq2seq_backend"),
         ("CITB38", "nlp_seq2seq_backend"),

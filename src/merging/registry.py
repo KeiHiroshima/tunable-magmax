@@ -19,8 +19,8 @@ obviously — `sum` for `average`. Result files written before this change keep
 the old directory names; see the note in postprocessing/utils.py.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 from src.merging.task_vectors import (
     merge_max_abs,
@@ -47,7 +47,7 @@ class MergeSpec:
     """
 
     name: str
-    fn: Optional[Callable]
+    fn: Callable | None
     label: str
     averaged: bool = False
     needs_target_data: bool = False
@@ -69,8 +69,7 @@ MERGE_SPECS: dict[str, MergeSpec] = {
         # Needs a whole target-environment-construction flow (which tasks, in
         # what ratio, sampled eval data) rather than a plain
         # task_vectors -> TaskVector call. The NLP backends build that flow
-        # themselves; see nlp_classification_backend::_merge_and_evaluate_masked
-        # and src/nlp/target_data.py.
+        # themselves.
         nlp_supported=False,
     ),
 }
