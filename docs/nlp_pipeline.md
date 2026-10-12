@@ -36,6 +36,7 @@ finetune_merge.sh ──> finetune.sh の後に merge.sh
 | [finetune.sh](../scripts/nlp/finetune.sh) | 変数の既定値を決めて `finetune_splitted.py` を起動する。`model=t5-large` なら `finetune_mode=lora`、それ以外は `full`。学習の既定値は `epochs=1`、`batch_size=8`、`grad_accum_steps=8`。`lr` は環境変数で指定したときだけ `--lr` として渡す | [NLP固有] |
 | [merge.sh](../scripts/nlp/merge.sh) | `merge_for_targetdata.py` を起動する。`finetune_mode` は `finetune.sh` と同じ規則で決まり、`--eval_full_testsets` が既定で有効 | [NLP固有] |
 | [finetune_merge.sh](../scripts/nlp/finetune_merge.sh) | `finetune.sh` の後に `merge.sh` を実行する | [NLP固有] |
+| [run_t5-base_lsb.sh](../scripts/nlp/run_t5-base_lsb.sh) | t5-base × LSB について、`finetune_all.sh` と `merge_comparison_all.sh` を続けて実行する。Order 4/5/6 を GPU を 1 枚ずつ使って並列に回し、ログは `logs/nlp_sweep/t5-base_LSB_order{4,5,6}.log` に出る。結果は [nlp_results_report.md](nlp_results_report.md) にまとめた | [NLP固有] |
 
 `finetune.sh` と `merge.sh` は、ほかに次の処理をする。
 
