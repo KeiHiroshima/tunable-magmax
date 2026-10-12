@@ -88,9 +88,9 @@ finetune_merge.sh ──> finetune.sh の後に merge.sh
    - 保存先がすでにあれば、そのタスクは学習せずに飛ばす。中断しても同じコマンドで続きから再開できる。
 3. **開始時のモデル**
    - full：直前のタスクのチェックポイントを読み込む（[utils.py](../src/utils.py) の `torch_load`。 **[共通]**）。
-   - lora：`zeroshot.pt` を読み込み、それまでの adapter をすべて、学習した順に重みへ統合する（[lora.py:100](../src/nlp/lora.py#L100) `merge_adapter_into`、O-LoRA 式9）。 **[NLP固有]**
+   - lora：`zeroshot.pt` を読み込み、それまでの adapter をすべて、学習した順に重みへ統合する（[lora.py:100](../src/lora.py#L100) `merge_adapter_into`、O-LoRA 式9）。 **[NLP固有]**
 4. `prepare_model`（[modeling_nlp.py:23](../src/nlp/modeling_nlp.py#L23) `freeze_shared_embeddings`）：T5 の共有埋め込みを凍結する。 **[NLP固有]**
-5. lora の場合のみ、[lora.py:64](../src/nlp/lora.py#L64) の `inject_lora` で全 attention の q と v を `LoRALinear` に差し替え、A と B 以外のパラメータをすべて凍結する（r=8、alpha=32、dropout 0.1）。 **[NLP固有]**
+5. lora の場合のみ、[lora.py:64](../src/lora.py#L64) の `inject_lora` で全 attention の q と v を `LoRALinear` に差し替え、A と B 以外のパラメータをすべて凍結する（r=8、alpha=32、dropout 0.1）。 **[NLP固有]**
 
 ### 2.3 学習
 
@@ -103,7 +103,7 @@ finetune_merge.sh ──> finetune.sh の後に merge.sh
 ### 2.4 保存
 
 - full：モデル全体を `finetuned_{i}.pt` に保存する（`torch_save`）。 **[共通]**
-- lora：[lora.py:78](../src/nlp/lora.py#L78) の `extract_adapter` で取り出した A と B だけを `adapter_{i}.pt` に保存する（t5-large で約9MB）。 **[NLP固有]**
+- lora：[lora.py:78](../src/lora.py#L78) の `extract_adapter` で取り出した A と B だけを `adapter_{i}.pt` に保存する（t5-large で約9MB）。 **[NLP固有]**
 
 保存先ディレクトリは [`_ckpt_dir`](../src/backends/nlp_classification_backend.py#L48)（**[NLP固有]**）が決める。実際のパスの組み立ては [paths.py:40](../src/paths.py#L40) の `checkpoint_dir`（**[共通]**）が行う。
 
@@ -121,7 +121,7 @@ $MAGMAX_BASE_DIR/checkpoints/{model}/sequential_finetuning/nlp_classification/{d
 1. `_build_tasks` でタスク列を作り直す（評価用データを使うため）。 **[NLP固有]**
 2. **タスクベクトルの読み込み**：[`_load_task_vectors`](../src/backends/nlp_classification_backend.py#L87)。 **[NLP固有]**
    - full：[task_vector.py:16](../src/merging/task_vector.py#L16) の `TaskVector(zeroshot, finetuned_i)` で、各タスク後のモデルと zero-shot モデルとの差分（θ_i − θ_0）を取る。 **[共通]**
-   - lora：[lora.py:108](../src/nlp/lora.py#L108) の `adapters_to_vector` で adapter 0..i の ΔW を累積和し、`TaskVector(vector=…)` にする。キーは q と v の重みだけ。 **[NLP固有]**
+   - lora：[lora.py:108](../src/lora.py#L108) の `adapters_to_vector` で adapter 0..i の ΔW を累積和し、`TaskVector(vector=…)` にする。キーは q と v の重みだけ。 **[NLP固有]**
 3. [`_tokenizer`](../src/backends/nlp_classification_backend.py#L66) で、評価時の生成結果をデコードするための tokenizer を読み込む。 **[NLP固有]**
 4. [merging/registry.py:79](../src/merging/registry.py#L79) の `get_merge_spec(args.merge_fn)` でマージ手法を決める。 **[共通]**
 
@@ -181,7 +181,7 @@ uv run python postprocessing/build_comparison_table.py --backend nlp \
 | 引数解析と既定値 | [args.py](../src/args.py)（`_resolve_training_defaults` の中で NLP 分岐） | — |
 | バックエンドの選択 | [backends/registry.py](../src/backends/registry.py) | — |
 | データとプロンプト | [task_spec.py](../src/task_spec.py) | [long_sequence_benchmark.py](../src/nlp/long_sequence_benchmark.py) |
-| モデル | — | [modeling_nlp.py](../src/nlp/modeling_nlp.py)、[lora.py](../src/nlp/lora.py) |
+| モデル | — | [modeling_nlp.py](../src/nlp/modeling_nlp.py)、[lora.py](../src/lora.py) |
 | タスク列の学習ループ | — | [finetune_nlp.py](../src/nlp/finetune_nlp.py)（CITB と共有） |
 | 1タスクの学習 | [trainer.py](../src/trainer.py) `build_scheduler`、[utils.py](../src/utils.py) `constant_lr`/`cosine_lr` | [trainer_nlp.py](../src/nlp/trainer_nlp.py) `_run_epochs` |
 | チェックポイントのパス | [paths.py](../src/paths.py)、[config.py](../src/config.py) | `adapter_path`（paths.py 内）、`_ckpt_dir` |

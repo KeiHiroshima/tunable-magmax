@@ -22,7 +22,15 @@ num_train_data_each_task=${num_train_data_each_task:-500}
 merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune magmax ties average random_mix masked_magmax_with_targetdata
 similarity_metric=${similarity_metric:-labels}       # labels ot_embedded cosine_embedded mmd_embedded (masked_magmax_with_targetdata only)
 target_config=${target_config:-target_data_config}   # target_data_config target_data_config_split{5,20,50}
-dir_name=${dir_name:-reproducing}
+# full: train every image-tower parameter. lora: train a LoRA adapter per
+# split (src/lora.py, lr 1e-3); its logs go under a -lora dir_name so they
+# never mix with a full run's.
+finetune_mode=${finetune_mode:-full}  # full lora
+if [ "${finetune_mode}" = "lora" ]; then
+    dir_name=${dir_name:-reproducing-lora}
+else
+    dir_name=${dir_name:-reproducing}
+fi
 
 
 if [ $n_splits -eq 5 ]; then
@@ -41,7 +49,7 @@ if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
 fi
 
 echo "======================================================================================"
-echo "Merging for target data on ${dataset}-${n_splits} (method: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
+echo "Merging ${model} (${finetune_mode}) for target data on ${dataset}-${n_splits} (method: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
@@ -56,6 +64,7 @@ uv run python merge_for_targetdata.py \
     --n_splits ${n_splits} \
     --split_strategy class \
     --sequential-finetuning \
+    --finetune_mode ${finetune_mode} \
     --results_db ${log_dir} \
     --taskseq_pattern ${task_seq} \
     --merge_fn ${merge_fn} \

@@ -62,6 +62,6 @@ def adapter_path(ckpt_dir: str, idx: int) -> str:
 
     Used instead of finetuned_path under --finetune_mode lora: only the
     adapter is stored, and the model after task `idx` is rebuilt as the
-    zero-shot checkpoint plus adapters 0..idx (src/nlp/lora.py).
+    zero-shot checkpoint plus adapters 0..idx (src/lora.py).
     """
     return os.path.join(ckpt_dir, f"adapter_{idx}.pt")

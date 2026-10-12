@@ -56,6 +56,72 @@ class ImageEncoder(torch.nn.Module):
         return torch.load(filename, weights_only=False)
 
 
+class UnpackedMultiheadAttention(torch.nn.Module):
+    """nn.MultiheadAttention with its packed in_proj split into separate q, k
+    and v nn.Linear layers. Computes the same function as the module it was
+    built from.
+
+    open_clip's ViT keeps q, k and v in one (3E, E) in_proj_weight, while
+    src/lora.py — written for T5, where they are separate Linear layers named
+    q/k/v — wraps nn.Linear modules by name. Splitting them lets the vision
+    pipeline use src/lora.py unchanged, and gives the task vector separate
+    q/v keys as under T5: a LoRA delta on the packed weight would carry an
+    all-zero k block that the masked merge would spend its budget on.
+    """
+
+    def __init__(self, mha: torch.nn.MultiheadAttention):
+        super().__init__()
+        assert mha._qkv_same_embed_dim and mha.in_proj_bias is not None
+        assert mha.bias_k is None and not mha.add_zero_attn
+        self.embed_dim = mha.embed_dim
+        self.num_heads = mha.num_heads
+        self.head_dim = mha.head_dim
+        self.dropout = mha.dropout
+        self.batch_first = mha.batch_first
+
+        weights = mha.in_proj_weight.detach().chunk(3)
+        biases = mha.in_proj_bias.detach().chunk(3)
+        for name, w, b in zip(("q", "k", "v"), weights, biases):
+            linear = torch.nn.Linear(self.embed_dim, self.embed_dim)
+            linear.weight = torch.nn.Parameter(w.clone())
+            linear.bias = torch.nn.Parameter(b.clone())
+            setattr(self, name, linear)
+        self.out_proj = torch.nn.Linear(self.embed_dim, self.embed_dim)
+        self.out_proj.weight = torch.nn.Parameter(mha.out_proj.weight.detach().clone())
+        self.out_proj.bias = torch.nn.Parameter(mha.out_proj.bias.detach().clone())
+
+    def _heads(self, x):
+        n, length, _ = x.shape
+        return x.view(n, length, self.num_heads, self.head_dim).transpose(1, 2)
+
+    def forward(self, query, key, value, need_weights=False, attn_mask=None):
+        # Only the call open_clip's ResidualAttentionBlock makes is supported.
+        assert not need_weights
+        if not self.batch_first:
+            query, key, value = (x.transpose(0, 1) for x in (query, key, value))
+        n, length, _ = query.shape
+        out = torch.nn.functional.scaled_dot_product_attention(
+            self._heads(self.q(query)),
+            self._heads(self.k(key)),
+            self._heads(self.v(value)),
+            attn_mask=attn_mask,
+            dropout_p=self.dropout if self.training else 0.0,
+        )
+        out = self.out_proj(out.transpose(1, 2).reshape(n, length, self.embed_dim))
+        if not self.batch_first:
+            out = out.transpose(0, 1)
+        return out, None
+
+
+def unpack_visual_attention(image_encoder: "ImageEncoder") -> "ImageEncoder":
+    """Replace every attention block of the image tower, in place, with an
+    UnpackedMultiheadAttention. The text tower is left as it is, so
+    src/lora.py's inject_lora only ever matches the image tower's q/v."""
+    for block in image_encoder.model.visual.transformer.resblocks:
+        block.attn = UnpackedMultiheadAttention(block.attn)
+    return image_encoder
+
+
 class ClassificationHead(torch.nn.Linear):
     def __init__(self, normalize, weights, biases=None):
         output_size, input_size = weights.shape

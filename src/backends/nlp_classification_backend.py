@@ -34,7 +34,7 @@ from src.merging.task_vector import TaskVector
 from src.merging.task_vectors import mask_and_merge_by_weights
 from src.nlp.finetune_nlp import finetune_task_sequence
 from src.nlp.long_sequence_benchmark import EVAL_BATCH_SIZE, build_task_sequence
-from src.nlp.lora import LoraConfig, adapters_to_vector
+from src.lora import LoraConfig, adapter_task_vectors
 from src.nlp.modeling_nlp import build_t5, freeze_shared_embeddings
 from src.nlp.target_data import build_target_weights, sample_target_eval_subset
 from src.nlp.trainer_nlp import generation_correct_and_total, train_seq2seq_task
@@ -105,12 +105,10 @@ def _load_task_vectors(args, ckpt_dir, zeroshot_path, n_tasks):
         torch.load(adapter_path(ckpt_dir, i), weights_only=False)
         for i in range(n_tasks)
     ]
-    if args.sequential_finetuning:
-        return [
-            TaskVector(vector=adapters_to_vector(adapters[: i + 1]))
-            for i in range(n_tasks)
-        ]
-    return [TaskVector(vector=adapters_to_vector([a])) for a in adapters]
+    return [
+        TaskVector(vector=v)
+        for v in adapter_task_vectors(adapters, args.sequential_finetuning)
+    ]
 
 
 @torch.no_grad()

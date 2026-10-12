@@ -26,7 +26,7 @@ def _run_epochs(model, task: TaskSpec, args, compute_loss):
     """Train `model` on `task` in place.
 
     Only parameters with requires_grad are optimised, so a LoRA-injected
-    model (src/nlp/lora.py) trains its adapter alone, and a model with frozen
+    model (src/lora.py) trains its adapter alone, and a model with frozen
     embeddings leaves them untouched (AdamW's weight decay would otherwise
     still move them).
 

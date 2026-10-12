@@ -19,11 +19,19 @@ epochs=${epochs:-10}
 n_splits=${n_splits:-5}         # 5 20 50
 task_seq=${task_seq:-A}         # A B C
 seed=${seed:-3}                 # 3 4 5
-dir_name=${dir_name:-DEFAULT_NAME}
+# full: train every image-tower parameter. lora: train a LoRA adapter per
+# split (src/lora.py, lr 1e-3); its logs go under a -lora dir_name so they
+# never mix with a full run's.
+finetune_mode=${finetune_mode:-full}  # full lora
+if [ "${finetune_mode}" = "lora" ]; then
+    dir_name=${dir_name:-DEFAULT_NAME-lora}
+else
+    dir_name=${dir_name:-DEFAULT_NAME}
+fi
 wandb_entity_name=${wandb_entity_name:-keihiroshima}
 
 echo "======================================================================================"
-echo "Finetuning ${model} on ${dataset}-${n_splits} (pattern: ${task_seq}) seed=${seed}"
+echo "Finetuning ${model} (${finetune_mode}) on ${dataset}-${n_splits} (pattern: ${task_seq}) seed=${seed}"
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
@@ -40,6 +48,7 @@ uv run python finetune_splitted.py \
     --n_splits ${n_splits} \
     --split_strategy class \
     --sequential-finetuning \
+    --finetune_mode ${finetune_mode} \
     --seed ${seed} \
     --results_db ${log_dir} \
     --taskseq_pattern ${task_seq} \

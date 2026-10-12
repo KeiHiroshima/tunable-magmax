@@ -70,7 +70,7 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
    (every task generates its label string, so there is no per-task head).
    `--finetune_mode full` saves a `finetuned_{i}.pt` per task;
    `--finetune_mode lora` saves only a LoRA `adapter_{i}.pt` per task
-   (`src/nlp/lora.py`), and each task starts from the zero-shot model with
+   (`src/lora.py`), and each task starts from the zero-shot model with
    every earlier adapter merged in.
 2. `merge_and_evaluate(args)` mirrors vision's `evaluate_merged_fts_on_target_data`
    step for step — same `--target_config` loop, same `MergeSpec.needs_target_data`

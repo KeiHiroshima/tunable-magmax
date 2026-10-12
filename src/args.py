@@ -11,6 +11,14 @@ from src.nlp.long_sequence_benchmark import TASK_ORDERS
 # (_resolve_training_defaults), so vision and CITB keep exactly the values
 # they had before these benchmarks existed.
 _DEFAULT_LR = 1e-5
+# The vision (CLIP) pipeline's LoRA learning rate is the NLP pipeline's
+# (_T5_DEFAULT_LR["lora"]): the hyperparameters that depend on what is
+# trained follow the T5 LoRA setting, while everything else (--wd,
+# --lr_schedule, epochs, batch size) stays the vision setting.
+_VISION_DEFAULT_LR = {"full": _DEFAULT_LR, "lora": 1e-3}
+# Datasets the vision backend serves (src/backends/registry.py); the only
+# non-T5 pipeline --finetune_mode lora is implemented for.
+_VISION_DATASETS = ("CIFAR100", "ImageNetR")
 _DEFAULT_WD = 0.1
 _DEFAULT_LR_SCHEDULE = "cosine"
 # O-LoRA's T5 setting: AdamW at a constant 1e-3 for LoRA, no weight decay.
@@ -53,11 +61,19 @@ def _resolve_training_defaults(parser, args):
                 f"--taskseq_pattern {args.taskseq_pattern} is not an order of "
                 f"{args.dataset}; choose one of {sorted(TASK_ORDERS[args.dataset])}"
             )
-    elif args.finetune_mode != "full":
-        parser.error("--finetune_mode lora is only implemented for StdCL/LSB")
+    elif args.finetune_mode != "full" and args.dataset not in _VISION_DATASETS:
+        parser.error(
+            "--finetune_mode lora is only implemented for StdCL/LSB and "
+            f"{'/'.join(_VISION_DATASETS)}"
+        )
 
     if args.lr is None:
-        args.lr = _T5_DEFAULT_LR[args.finetune_mode] if t5 else _DEFAULT_LR
+        if t5:
+            args.lr = _T5_DEFAULT_LR[args.finetune_mode]
+        elif args.dataset in _VISION_DATASETS:
+            args.lr = _VISION_DEFAULT_LR[args.finetune_mode]
+        else:
+            args.lr = _DEFAULT_LR
     if args.wd is None:
         args.wd = _T5_DEFAULT_WD if t5 else _DEFAULT_WD
     if args.lr_schedule is None:
@@ -118,8 +134,9 @@ def parse_arguments(argv=None):
         type=float,
         default=None,
         help=(
-            "Learning rate. Default 1e-5; for StdCL/LSB 1e-4 under "
-            "--finetune_mode full and 1e-3 under --finetune_mode lora."
+            "Learning rate. Default 1e-5 (1e-3 under --finetune_mode lora); "
+            "for StdCL/LSB 1e-4 under --finetune_mode full and 1e-3 under "
+            "--finetune_mode lora."
         ),
     )
     parser.add_argument(
@@ -138,9 +155,11 @@ def parse_arguments(argv=None):
         default="full",
         choices=["full", "lora"],
         help=(
-            "StdCL/LSB only. full: train every parameter, save a checkpoint per "
-            "task. lora: train a LoRA adapter per task, merged into the weights "
-            "before the next one; only adapters are saved."
+            "StdCL/LSB and CIFAR100/ImageNetR. full: train every parameter, "
+            "save a checkpoint per task. lora: train a LoRA adapter per task "
+            "(q/v of every attention block; for CLIP, the image tower's), "
+            "merged into the weights before the next one; only adapters are "
+            "saved."
         ),
     )
     parser.add_argument(

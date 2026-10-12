@@ -96,14 +96,21 @@ class TaskVector:
             pretrained_model = torch.load(pretrained_checkpoint, weights_only=False)
             new_state_dict = {}
             pretrained_state_dict = pretrained_model.state_dict()
+            missing = []
             for key in pretrained_state_dict:
                 if key not in self.vector:
-                    print(
-                        f"Warning: key {key} is present in the pretrained state dict but not in the task vector"
-                    )
+                    missing.append(key)
                     continue
                 new_state_dict[key] = (
                     pretrained_state_dict[key] + scaling_coef * self.vector[key]
+                )
+            # One line rather than one per key: a LoRA task vector covers only
+            # the adapted weights, so every other key is missing by design.
+            if missing:
+                print(
+                    f"Warning: {len(missing)} of {len(pretrained_state_dict)} keys "
+                    f"in the pretrained state dict are not in the task vector "
+                    f"and keep their pretrained values (first: {missing[0]})"
                 )
         pretrained_model.load_state_dict(new_state_dict, strict=False)
         return pretrained_model
