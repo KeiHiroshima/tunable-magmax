@@ -18,6 +18,12 @@
 # Only one sweep may run at a time: two would train the same splits at once.
 
 export finetune_mode=lora
+# The merges run in parallel and are CPU-heavy (the masked merge, OT). Left
+# alone, each process starts one thread per core, and the oversubscribed
+# machine (3 processes x 24 threads on 24 cores) ran the proposed method's
+# merges up to ~8x slower than a single full-run merge did. Cap the threads
+# per process instead; the results do not depend on the thread count.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
 n_splits_list=${n_splits_list:-"5 20 50"}
 gpu_ids=${gpu_ids:-"0 1 2"}
 

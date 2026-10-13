@@ -48,7 +48,7 @@ finetune_merge.sh ──> finetune_splitted.py の後に merge_for_targetdata.py
 1. [finetune_splitted.py](../finetune_splitted.py) と [merge_for_targetdata.py](../merge_for_targetdata.py) が `parse_arguments()` を呼ぶ。 **[共通]**
 2. [args.py:67](../src/args.py#L67) の `parse_arguments` が引数を解析し、続けて [args.py:46](../src/args.py#L46) の `_resolve_training_defaults` を呼ぶ。 **[共通・vision分岐]**
    - vision では未指定の値に 学習率 1e-5、weight decay 0.1、`cosine` スケジュールを補う。
-   - `--finetune_mode lora` が指定されていたらエラーにする（LoRA は StdCL/LSB のみ）。
+   - `--finetune_mode lora` のときは学習率の既定値を 1e-3 にする（NLP の LoRA と同じ値）。weight decay とスケジュールは full と同じ。LoRA を使った実験の結果は [vision_lora_report.md](vision_lora_report.md) を参照。
    - 最後に `seed_everything` で乱数を固定する。
 3. [backends/registry.py:18](../src/backends/registry.py#L18) の `resolve_backend` が、`CIFAR100`/`ImageNetR` を [vision_backend.py](../src/backends/vision_backend.py) に振り分ける。 **[共通]**
    - `finetune_splitted.py` からは `finetune(args)`、`merge_for_targetdata.py` からは `merge_and_evaluate(args)` が呼ばれる。
