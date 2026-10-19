@@ -169,9 +169,18 @@ def test_nlp_order_must_belong_to_the_benchmark(dataset, pattern):
         _parse(["x", "--model", "t5-base", "--dataset", dataset, "--taskseq_pattern", pattern])
 
 
-def test_lora_is_rejected_outside_stdcl_and_lsb():
+def test_vision_lora_takes_the_t5_lora_learning_rate():
+    """The vision LoRA run takes the T5 LoRA learning rate, but keeps the
+    vision weight decay and schedule."""
+    args = _parse(FINETUNE_ARGV + ["--finetune_mode", "lora"])
+
+    assert args.finetune_mode == "lora"
+    assert (args.lr, args.wd, args.lr_schedule) == (1e-3, 0.1, "cosine")
+
+
+def test_lora_is_rejected_outside_stdcl_lsb_and_vision():
     with pytest.raises(SystemExit):
-        _parse(FINETUNE_ARGV + ["--finetune_mode", "lora"])
+        _parse(["x", "--model", "t5-small", "--dataset", "CITB19", "--finetune_mode", "lora"])
 
 
 def test_nlp_merge_script_argv_parses():

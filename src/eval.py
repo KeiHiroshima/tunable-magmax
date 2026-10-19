@@ -79,10 +79,20 @@ def eval_given_dataset(image_encoder, dataset, dataset_name, args):
 
 
 def _compute_similarity_weights(
-    task_vectors, train_subset_each_task, target_dataset_meta, spec, args
+    task_vectors,
+    train_subset_each_task,
+    target_dataset_meta,
+    spec,
+    args,
+    pretrained_checkpoint=None,
 ):
     """Call a target-data-driven merge, returning
-    (merged_tv, weights_each_task, similarity_metric)."""
+    (merged_tv, weights_each_task, similarity_metric).
+
+    `pretrained_checkpoint` is the model the task vectors apply to; the
+    *_embedded metrics build each task's encoder from it. It must be passed
+    whenever it is not zeroshot.pt (--finetune_mode lora), or those encoders
+    would silently be built on a model the task vectors' keys do not match."""
     assert spec.needs_target_data, f"{spec.name} does not take target data"
     return spec.fn(
         task_vectors,
@@ -90,6 +100,7 @@ def _compute_similarity_weights(
         target_dataset_meta,
         similarity_metric=args.similarity_metric,
         args=args,
+        pretrained_checkpoint=pretrained_checkpoint,
     )
 
 
@@ -110,7 +121,12 @@ def _build_merged_encoder(
     """
     if spec.needs_target_data:
         merged_tv, weights_each_task, similarity_metric = _compute_similarity_weights(
-            task_vectors, train_subset_each_task, target_dataset_meta, spec, args
+            task_vectors,
+            train_subset_each_task,
+            target_dataset_meta,
+            spec,
+            args,
+            pretrained_checkpoint=pretrained_checkpoint,
         )
         log_data_merge_fn = {
             "merging_function": spec.name,

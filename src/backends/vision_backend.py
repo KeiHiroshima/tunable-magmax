@@ -15,51 +15,117 @@ from logging import getLogger
 import torch
 import wandb
 from src.cl_utils import get_dataset_and_classifier_for_split
-from src.config import get_zeroshot_checkpoint
+from src.config import get_unpacked_zeroshot_checkpoint, get_zeroshot_checkpoint
 from src.datasets.common import get_dataloader
 from src.datasets.registry import get_dataset
 from src.eval import evaluate_merged_fts_on_target_data
+from src.lora import (
+    LoraConfig,
+    adapter_task_vectors,
+    extract_adapter,
+    inject_lora,
+    merge_adapter_into,
+)
 from src.merging.task_vector import TaskVector
 from src.merging.registry import get_merge_spec
-from src.modeling import ImageEncoder
-from src.paths import checkpoint_dir, finetuned_path
+from src.modeling import ImageEncoder, unpack_visual_attention
+from src.paths import adapter_path, checkpoint_dir, finetuned_path
 from src.trainer import (
     build_loss_fn,
     build_optimizer_and_scheduler,
     run_training_epoch,
     setup_model_for_training,
 )
+from src.utils import torch_save
 
 logger = getLogger(__name__)
 
 
+def _lora(args):
+    # Callers that build `args` by hand without the field get a full run.
+    return getattr(args, "finetune_mode", "full") == "lora"
+
+
 def _ckpt_dir(args):
     """Where this vision run's per-split checkpoints live. The fine-tuning and
-    merging halves both go through here, so they cannot drift apart."""
+    merging halves both go through here, so they cannot drift apart. A LoRA
+    run writes adapters rather than whole checkpoints, so it gets its own
+    directory instead of sharing the full run's."""
+    scope = f"{args.dataset}-{args.n_splits}"
     return checkpoint_dir(
         args,
         group=f"{args.split_strategy}_incremental",
-        scope=f"{args.dataset}-{args.n_splits}",
+        scope=f"{scope}-lora" if _lora(args) else scope,
+    )
+
+
+def _ensure_unpacked_zeroshot_checkpoint(args) -> str:
+    """The base every LoRA model is built on: zeroshot.pt (created first if
+    missing, exactly as a full run would) with its image-tower attention
+    unpacked into q/k/v layers. Same weights and outputs as zeroshot.pt."""
+    zeroshot_path = get_zeroshot_checkpoint(args.model)
+    if not os.path.exists(zeroshot_path):
+        ImageEncoder(args, keep_lang=True).save(zeroshot_path)
+    unpacked_path = get_unpacked_zeroshot_checkpoint(args.model)
+    if not os.path.exists(unpacked_path):
+        encoder = torch.load(zeroshot_path, weights_only=False)
+        torch_save(unpack_visual_attention(encoder), unpacked_path)
+    return unpacked_path
+
+
+def _log_trainable_parameters(image_encoder):
+    """How far LoRA cuts the trained parameters: a full run updates the whole
+    image tower (the text tower and the zero-shot heads are frozen)."""
+    n_lora = sum(p.numel() for p in image_encoder.parameters() if p.requires_grad)
+    n_full = sum(
+        p.numel()
+        for name, p in image_encoder.model.visual.named_parameters()
+        if "lora_" not in name
+    )
+    logger.info(
+        f"Trainable parameters: LoRA {n_lora:,} / full fine-tuning {n_full:,} "
+        f"= {100 * n_lora / n_full:.3f}%"
     )
 
 
 def _run_sequential_finetuning(args):
     train_dataset = args.dataset
     ckpdir = _ckpt_dir(args)
+    lora_config = LoraConfig() if _lora(args) else None
+    if lora_config is not None:
+        assert args.load is None, "--load is not supported with --finetune_mode lora"
+        lora_base_path = _ensure_unpacked_zeroshot_checkpoint(args)
+    # --finetune_mode lora: every adapter so far, in split order. A skipped
+    # split still joins the chain, so the next split continues from it.
+    adapters_so_far: list[str] = []
 
     # finetune for each split separately
     for split_idx in range(args.n_splits):
         logger.info(f"\n##### SPLIT {split_idx} #####")
-        ft_path = finetuned_path(ckpdir, split_idx)
+        ft_path = (
+            adapter_path(ckpdir, split_idx)
+            if lora_config
+            else finetuned_path(ckpdir, split_idx)
+        )
         if os.path.exists(ft_path):
             logger.info(
                 f"Skipping finetuning on split {split_idx}, "
                 f"ckpt already exists under {ft_path}"
             )
+            adapters_so_far.append(ft_path)
             continue
 
         assert train_dataset is not None, "Please provide a training dataset."
-        if args.load is not None and args.load.endswith("pt"):
+        if lora_config is not None:
+            # Same chain as src/nlp/finetune_nlp.py: the zero-shot model with
+            # every earlier adapter merged in, in order (O-LoRA eq. 9).
+            image_encoder = torch.load(lora_base_path, weights_only=False)
+            if args.sequential_finetuning:
+                for path in adapters_so_far:
+                    merge_adapter_into(
+                        image_encoder, torch.load(path, weights_only=False)
+                    )
+        elif args.load is not None and args.load.endswith("pt"):
             image_encoder = ImageEncoder.load(args.load, keep_lang=True)
         elif args.sequential_finetuning and split_idx != 0:
             prev_ckpt = finetuned_path(ckpdir, split_idx - 1)
@@ -85,6 +151,11 @@ def _run_sequential_finetuning(args):
         dataset, classification_head = get_dataset_and_classifier_for_split(
             dataset, split_idx, image_encoder, args
         )
+        if lora_config is not None:
+            # After the head is built: inject_lora freezes everything but the
+            # adapters, and only matches the (unpacked) image tower's q/v.
+            inject_lora(image_encoder, lora_config)
+            _log_trainable_parameters(image_encoder)
 
         model = setup_model_for_training(
             image_encoder, classification_head, args, freeze_lang=True
@@ -114,7 +185,11 @@ def _run_sequential_finetuning(args):
 
         image_encoder = model.module.image_encoder
 
-        image_encoder.save(ft_path)
+        if lora_config is not None:
+            torch.save(extract_adapter(image_encoder, lora_config), ft_path)
+        else:
+            image_encoder.save(ft_path)
+        adapters_so_far.append(ft_path)
 
 
 def finetune(args):
@@ -144,16 +219,29 @@ def finetune(args):
 
 
 def merge_and_evaluate(args):
-    pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
-
     method = "seq-ft" if args.sequential_finetuning else "ind-ft"
     name = f"merging_target-{args.dataset}-{args.n_splits}-{method}"
 
     ckpt_dir = _ckpt_dir(args)
-    task_vectors = [
-        TaskVector(pretrained_checkpoint, finetuned_path(ckpt_dir, _idx))
-        for _idx in range(args.n_splits)
-    ]
+    if _lora(args):
+        # As in the NLP backend: each split's task vector is rebuilt from the
+        # adapters, over the adapted q/v weights only, and applied to the
+        # unpacked zero-shot model those weights belong to.
+        pretrained_checkpoint = _ensure_unpacked_zeroshot_checkpoint(args)
+        adapters = [
+            torch.load(adapter_path(ckpt_dir, _idx), weights_only=False)
+            for _idx in range(args.n_splits)
+        ]
+        task_vectors = [
+            TaskVector(vector=v)
+            for v in adapter_task_vectors(adapters, args.sequential_finetuning)
+        ]
+    else:
+        pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+        task_vectors = [
+            TaskVector(pretrained_checkpoint, finetuned_path(ckpt_dir, _idx))
+            for _idx in range(args.n_splits)
+        ]
 
     spec = get_merge_spec(args.merge_fn)
     # Every merge method was registered with the same single coefficient; the

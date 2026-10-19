@@ -33,7 +33,7 @@ from typing import Any
 import torch
 
 from src.config import get_zeroshot_checkpoint
-from src.nlp.lora import LoraConfig, extract_adapter, inject_lora, merge_adapter_into
+from src.lora import LoraConfig, extract_adapter, inject_lora, merge_adapter_into
 from src.paths import adapter_path, finetuned_path
 from src.task_spec import TaskSpec
 from src.utils import torch_load, torch_save

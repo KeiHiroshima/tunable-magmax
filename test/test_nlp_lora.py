@@ -1,4 +1,4 @@
-"""--finetune_mode lora (src/nlp/lora.py and its use in
+"""--finetune_mode lora (src/lora.py and its use in
 src/nlp/finetune_nlp.py / src/backends/nlp_classification_backend.py).
 
 Only adapters are saved, and every model the merge step scores is rebuilt
@@ -21,7 +21,7 @@ from transformers import T5Config, T5ForConditionalGeneration
 
 from src.backends import nlp_classification_backend as backend
 from src.nlp import finetune_nlp
-from src.nlp.lora import (
+from src.lora import (
     LoraConfig,
     LoRALinear,
     adapter_deltas,

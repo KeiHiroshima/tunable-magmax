@@ -70,7 +70,7 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
    (every task generates its label string, so there is no per-task head).
    `--finetune_mode full` saves a `finetuned_{i}.pt` per task;
    `--finetune_mode lora` saves only a LoRA `adapter_{i}.pt` per task
-   (`src/nlp/lora.py`), and each task starts from the zero-shot model with
+   (`src/lora.py`), and each task starts from the zero-shot model with
    every earlier adapter merged in.
 2. `merge_and_evaluate(args)` mirrors vision's `evaluate_merged_fts_on_target_data`
    step for step — same `--target_config` loop, same `MergeSpec.needs_target_data`
@@ -271,10 +271,10 @@ bash scripts/vision/finetune_merge.sh
 | `--taskseq_pattern` | `A` | fixed task order; `B`/`C` are deterministic reshuffles. StdCL/LSB take O-LoRA's orders instead (`1`-`3` / `4`-`6`) |
 | `--epochs` | 10 | |
 | `--batch_size` | 128 | the paper's value. **ViT-B/16 at 128 needs more than 16 GB** — pass `--batch_size 32` on a smaller card |
-| `--lr` | 1e-5 | StdCL/LSB: 1e-4 under `--finetune_mode full`, 1e-3 under `lora` |
+| `--lr` | 1e-5 | 1e-3 under `--finetune_mode lora`; StdCL/LSB: 1e-4 under `--finetune_mode full`, 1e-3 under `lora` |
 | `--wd` | 0.1 | StdCL/LSB: 0 |
 | `--lr_schedule` | `cosine` | StdCL/LSB: `constant` (no warmup) |
-| `--finetune_mode` | `full` | StdCL/LSB only: `full` or `lora` |
+| `--finetune_mode` | `full` | `full` or `lora` (StdCL/LSB, and CIFAR100/ImageNetR: LoRA on the image tower's q/v) |
 | `--grad_accum_steps` | 1 | NLP only: micro-batches per optimizer step |
 | `--scaling_coef` | 0.5 | StdCL/LSB: scale of the merged task vector |
 | `--eval_full_testsets` | off | StdCL/LSB: also report Average Accuracy (see above) |

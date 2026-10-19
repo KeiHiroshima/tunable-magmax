@@ -1,7 +1,11 @@
-"""LoRA for --finetune_mode lora (t5-large), following O-LoRA's T5 setting:
-r=8, alpha=32, dropout 0.1 on the q and v projections of every T5 attention
-block (encoder self-attention, decoder self- and cross-attention) — peft's
-default target modules for T5, which O-LoRA uses unchanged.
+"""LoRA for --finetune_mode lora, following O-LoRA's T5 setting: r=8,
+alpha=32, dropout 0.1 on the q and v projections of every attention block —
+peft's default target modules for T5, which O-LoRA uses unchanged.
+
+Shared by the NLP pipeline (t5-large: every encoder self-attention and
+decoder self- and cross-attention) and the vision pipeline (CLIP ViT: every
+image-tower attention, after src/modeling.py's unpack_visual_attention has
+split its packed in_proj into q/k/v layers so the same name matching applies).
 
 Written here rather than taken from `peft` because the pipeline needs only
 the four operations below, and needs them explicit: continual learning
@@ -117,3 +121,14 @@ def adapters_to_vector(adapters: list[dict]) -> dict[str, torch.Tensor]:
         for key, delta in adapter_deltas(adapter).items():
             vector[key] = vector[key] + delta if key in vector else delta
     return vector
+
+
+def adapter_task_vectors(
+    adapters: list[dict], sequential: bool
+) -> list[dict[str, torch.Tensor]]:
+    """One task vector per task, over the adapted weights only. Under
+    sequential fine-tuning task i's model carries adapters 0..i, so its
+    vector is their running sum; otherwise each adapter stands alone."""
+    if sequential:
+        return [adapters_to_vector(adapters[: i + 1]) for i in range(len(adapters))]
+    return [adapters_to_vector([a]) for a in adapters]
