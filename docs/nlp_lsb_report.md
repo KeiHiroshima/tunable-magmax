@@ -1,0 +1,295 @@
+# LSB（15 タスクの長い系列）での提案手法の評価（NLP）
+
+NLP の継続学習ベンチマーク LSB（Long Sequence Benchmark、15 タスク）[3] で、提案手法 Tunable MAGMAX [1] を既存のモデルマージ手法と比べた。実験設定は、O-LoRA [2] の T5 の設定と、提案手法の論文 [1] の Table 2 の評価方法に合わせた。
+
+- モデル：t5-base（全パラメータ学習）と t5-large（LoRA [9]）
+- 実行と集計の手順：[nlp_pipeline.md](nlp_pipeline.md)、[nlp_aggregation.md](nlp_aggregation.md)
+- StdCL との比較と、傾向の違いの考察：[nlp_results_report.md](nlp_results_report.md)
+- 結果の JSON：`logs/nlp/t5-base/LSB/`、`logs/nlp/t5-large/LSB-lora/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
+- 文献番号 [n] は末尾の[参考文献](#参考文献)を指す。
+
+## 1. 実験設定
+
+### 1.1 ベンチマーク
+
+LSB は Progressive Prompts [3] で導入された 15 タスクのテキスト分類の系列で、O-LoRA [2] でも Orders 4–6 として使われている。データは O-LoRA のリポジトリ（github.com/cmnfriend/O-LoRA）が配布する `CL_Benchmark` をそのまま使った。
+
+| カテゴリ | タスク（出典） | 学習データ数 | テストデータ数 | クラス数 |
+|---|---|---|---|---|
+| 感情分析（SC） | Yelp、Amazon [4] | 5,000 | 7,600 | 5 |
+| | IMDB [7] | 2,000 | 7,600 | 2 |
+| | SST-2（GLUE [5]） | 2,000 | 872 | 2 |
+| トピック分類（TC） | DBpedia [4] | 14,000 | 7,600 | 14 |
+| | Yahoo [4] | 10,000 | 7,600 | 10 |
+| | AG News [4] | 4,000 | 7,600 | 4 |
+| 自然言語推論（NLI） | MNLI（GLUE [5]） | 3,000 | 7,600 | 3 |
+| | RTE（GLUE [5]） | 2,000 | 277 | 2 |
+| | CB（SuperGLUE [6]） | 250 | 56 | 3 |
+| 言い換えの判定 | QQP（GLUE [5]） | 2,000 | 7,600 | 2 |
+| 語義の判定 | WiC（SuperGLUE [6]） | 2,000 | 638 | 2 |
+| 質問応答 | COPA（SuperGLUE [6]） | 400 | 100 | 2 |
+| | BoolQ（SuperGLUE [6]） | 2,000 | 3,270 | 2 |
+| | MultiRC（SuperGLUE [6]） | 2,000 | 4,848 | 2 |
+
+タスクの順序は O-LoRA [2] の Table 7（Orders 4–6）に従った。
+
+| Order | タスクの順序 |
+|---|---|
+| 4 | MNLI → CB → WiC → COPA → QQP → BoolQ → RTE → IMDB → Yelp → Amazon → SST-2 → DBpedia → AG News → MultiRC → Yahoo |
+| 5 | MultiRC → BoolQ → WiC → MNLI → CB → COPA → QQP → RTE → IMDB → SST-2 → DBpedia → AG News → Yelp → Amazon → Yahoo |
+| 6 | Yelp → Amazon → MNLI → CB → COPA → QQP → RTE → IMDB → SST-2 → DBpedia → AG News → Yahoo → MultiRC → BoolQ → WiC |
+
+### 1.2 学習とマージの設定
+
+| 項目 | 値 | 出典・根拠 |
+|---|---|---|
+| モデル | T5 [8]。t5-base は全パラメータを学習（共有埋め込みは固定）、t5-large は LoRA | t5-large は O-LoRA [2] と同じ。t5-base は追加した設定 |
+| 入力の形式 | `Task:{カテゴリ}\nDataset:{タスク}\n{指示文}Option: {ラベル候補} \n{本文}\nAnswer:` を入力し、ラベルの文字列を生成させる | O-LoRA [2] の Table 8 の指示文と、そのリポジトリの入力形式 |
+| 入力と出力の最大長 | 512 / 50 トークン | O-LoRA のリポジトリ |
+| 学習 | 逐次ファインチューニング、1 epoch、AdamW、lr 一定、wd 0、dropout 0.1 | O-LoRA [2] の付録 A.1 |
+| 学習率 | t5-large（LoRA）1e-3、t5-base（全パラメータ）1e-4 | t5-large は O-LoRA [2] の付録 A.1。t5-base は全パラメータ学習用に下げた値（探索はしていない） |
+| バッチ | 64（GPU 1 枚で 8 × 勾配累積 8） | O-LoRA [2] の付録 A.1 は 8 GPU × 8 |
+| LoRA | r = 8、alpha = 32、dropout 0.1。全 attention（エンコーダの self、デコーダの self と cross）の q と v | LoRA [9] を、O-LoRA が使う `peft` の T5 の既定値で適用 |
+| LoRA の逐次学習 | 各タスクの後に adapter を重みへ足し込み、次のタスクでは新しい adapter を付ける | O-LoRA [2] の式 9。O-LoRA の直交化の損失（λ1、λ2）は使っていない |
+| 精度の計算 | 生成した文字列を正規化し、正解ラベルとの完全一致で数える | O-LoRA のリポジトリ |
+| タスクベクトル | τ_i = θ_i − θ_0（タスク i まで学習したモデルと zero-shot モデルの差）。LoRA では Σ_{j≤i} (α/r)·B_j A_j | Task arithmetic [13]、MAGMAX [10] |
+| マージの係数 | λ_merge = 0.5（θ_merged = θ_0 + 0.5·τ_merged） | 提案手法の論文 [1] |
+| 比較手法 | Baseline（逐次学習の最終モデル）、Random Mix [10]、Average（Model Soup [12]）、TIES-Merging [11]、MAGMAX [10] | 提案手法の論文 [1] と同じ |
+| seed | 3 / 4 / 5 | 提案手法の論文 [1] と同じく 3 試行 |
+
+### 1.3 ターゲット環境（運用環境）
+
+| 項目 | 値 |
+|---|---|
+| 設定ファイル | `configs/target_data_config_lsb.json` |
+| 混合比 | D1 (0.5, 0.5)、D2 (0.8, 0.2)、D3 (1/3, 1/3, 1/3)、D4 (0.4, 0.4, 0.2)、D5 (0.6, 0.2, 0.2)。提案手法の論文 [1] の §4.3 と同じ |
+| 環境の数 | 混合比ごとに 5 variant（target 1–25）。別に、15 タスクを均等に混ぜた target 26 |
+| 混ぜるタスク | 15 タスクから 2 または 3 タスクを、variant ごとの seed で選ぶ（`select_target_tasks`）。選ぶのは系列の中での位置なので、Order が違えば別のタスクになる |
+| 評価データ | 1 環境 200 件。選んだ各タスクのテストデータから、混合比に応じた件数を抽出する |
+| 提案手法の選好ベクトル | 環境の混合比をそのまま使う（[src/nlp/target_data.py](../src/nlp/target_data.py)） |
+| 評価指標 | ターゲット環境の 200 件での精度（`overall_accuracy`） |
+
+**vision との違い**：vision（CIFAR-100）はクラス増分学習なので、ターゲット環境の選好ベクトルを、メタデータ（環境の 10%）のラベルの分布（Label）や OT 距離（OT）から推定する。LSB はタスクがそれぞれ別のデータセットなので、どのタスクから何割取ったかは環境を作る時点で分かっており、推定する段階がない。そのため NLP の Tunable MAGMAX は手法の種類が 1 つだけで、vision の Label に近い（推定の誤差がない）条件になっている。
+
+実行のコマンド：
+
+```bash
+# t5-large（LoRA）
+model=t5-large dataset=LSB bash scripts/nlp/finetune_all.sh
+model=t5-large dataset=LSB bash scripts/nlp/merge_comparison_all.sh
+# t5-base（全パラメータ）
+bash scripts/nlp/run_t5-base_lsb.sh
+```
+
+## 2. 学習パラメータの削減率（t5-large の LoRA）
+
+| | パラメータ数 | t5-large 全体に対する割合 |
+|---|---|---|
+| t5-large 全体 | 737,668,096 | 100% |
+| 全パラメータ学習で学習する数（共有埋め込みを固定） | 704,769,024 | 95.5% |
+| LoRA（144 層 × (8×1024 + 1024×8)） | **2,359,296** | **0.320%**（全パラメータ学習に対しては 0.335%） |
+
+- LoRA を付けるのは、エンコーダの self-attention 24 層、デコーダの self-attention と cross-attention 各 24 層の、q と v の Linear（計 144 個）。
+- マージの対象になる要素の数も減る。LoRA のタスクベクトルは 144 個の 1024×1024 の重みで、150,994,944 要素である。
+- 保存するのは adapter だけで、1 タスク約 9.5MB、LSB の全 run（9 run × 15 タスク）で約 1.3GB だった。t5-base の全パラメータ学習のチェックポイントは、LSB の全 run で約 113GB だった。
+- t5-base（全パラメータ学習）で学習するパラメータは 198,229,248（全体 222,903,552 から共有埋め込みを除いた数）。
+
+## 3. 結果
+
+数値は、各混合比について 5 variant の平均を seed ごとに取り、3 seed の平均 ± 標準偏差を求めたもの。全 Order の表は、seed ごとに Order 4–6 も平均してから求めた。平均の列は、seed ごとに D1〜D5 を平均してから求めた。太字は各列の最大値。設定ファイルの混合比は論文と同じ D1〜D5 の順に並んでいるので、並べ替えはしていない。
+
+### 3.1 全 Order の平均（論文 Table 2 の形式）
+
+#### LSB, t5-base（全パラメータ学習）
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.625 ± 0.055 | 0.641 ± 0.056 | 0.603 ± 0.046 | 0.610 ± 0.049 | 0.620 ± 0.049 | 0.620 ± 0.051 |
+| Random Mix | 0.595 ± 0.008 | 0.596 ± 0.013 | 0.591 ± 0.009 | 0.591 ± 0.007 | 0.590 ± 0.009 | 0.593 ± 0.009 |
+| Average | 0.596 ± 0.009 | 0.596 ± 0.014 | 0.591 ± 0.009 | 0.592 ± 0.009 | 0.591 ± 0.009 | 0.593 ± 0.010 |
+| TIES-Merging | 0.692 ± 0.006 | 0.707 ± 0.005 | 0.666 ± 0.008 | 0.675 ± 0.007 | 0.686 ± 0.008 | 0.685 ± 0.006 |
+| MAGMAX | 0.716 ± 0.009 | 0.737 ± 0.009 | 0.679 ± 0.006 | 0.695 ± 0.006 | 0.706 ± 0.008 | 0.707 ± 0.008 |
+| Tunable MAGMAX | **0.738** ± 0.007 | **0.738** ± 0.006 | **0.705** ± 0.005 | **0.697** ± 0.003 | **0.709** ± 0.001 | **0.717** ± 0.002 |
+
+#### LSB, t5-large（LoRA）
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.663 ± 0.009 | 0.682 ± 0.008 | 0.631 ± 0.014 | 0.641 ± 0.011 | 0.655 ± 0.010 | 0.654 ± 0.010 |
+| Random Mix | 0.670 ± 0.012 | 0.675 ± 0.016 | 0.642 ± 0.013 | 0.653 ± 0.013 | 0.656 ± 0.016 | 0.659 ± 0.014 |
+| Average | 0.672 ± 0.013 | 0.676 ± 0.015 | 0.644 ± 0.012 | 0.655 ± 0.012 | 0.656 ± 0.013 | 0.661 ± 0.013 |
+| TIES-Merging | 0.720 ± 0.010 | 0.729 ± 0.011 | 0.674 ± 0.013 | 0.692 ± 0.013 | 0.698 ± 0.014 | 0.703 ± 0.012 |
+| MAGMAX | 0.718 ± 0.007 | 0.731 ± 0.011 | 0.676 ± 0.005 | 0.693 ± 0.004 | 0.699 ± 0.007 | 0.703 ± 0.006 |
+| Tunable MAGMAX | **0.745** ± 0.002 | **0.787** ± 0.020 | **0.695** ± 0.005 | **0.705** ± 0.005 | **0.739** ± 0.018 | **0.734** ± 0.006 |
+
+### 3.2 Order ごとの結果
+
+#### t5-base, Order 4
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.763 ± 0.031 | 0.747 ± 0.043 | 0.699 ± 0.024 | 0.721 ± 0.027 | 0.711 ± 0.036 | 0.728 ± 0.032 |
+| Random Mix | 0.688 ± 0.015 | 0.686 ± 0.021 | 0.689 ± 0.014 | 0.683 ± 0.012 | 0.689 ± 0.017 | 0.687 ± 0.015 |
+| Average | 0.689 ± 0.018 | 0.685 ± 0.024 | 0.689 ± 0.016 | 0.684 ± 0.014 | 0.688 ± 0.020 | 0.687 ± 0.018 |
+| TIES-Merging | 0.788 ± 0.004 | 0.783 ± 0.006 | 0.744 ± 0.012 | 0.761 ± 0.009 | 0.763 ± 0.008 | 0.768 ± 0.008 |
+| MAGMAX | 0.818 ± 0.011 | 0.810 ± 0.011 | 0.757 ± 0.013 | 0.781 ± 0.013 | 0.777 ± 0.016 | 0.789 ± 0.012 |
+| Tunable MAGMAX | **0.850** ± 0.004 | **0.814** ± 0.010 | **0.792** ± 0.007 | **0.803** ± 0.005 | **0.785** ± 0.009 | **0.809** ± 0.004 |
+
+#### t5-base, Order 5
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.616 ± 0.010 | 0.633 ± 0.007 | 0.630 ± 0.005 | 0.619 ± 0.009 | 0.631 ± 0.008 | 0.626 ± 0.008 |
+| Random Mix | 0.505 ± 0.034 | 0.462 ± 0.034 | 0.506 ± 0.029 | 0.505 ± 0.034 | 0.474 ± 0.032 | 0.491 ± 0.032 |
+| Average | 0.508 ± 0.035 | 0.465 ± 0.033 | 0.508 ± 0.029 | 0.507 ± 0.035 | 0.477 ± 0.031 | 0.493 ± 0.032 |
+| TIES-Merging | 0.630 ± 0.017 | 0.633 ± 0.010 | 0.634 ± 0.018 | 0.629 ± 0.016 | 0.635 ± 0.010 | 0.632 ± 0.014 |
+| MAGMAX | 0.653 ± 0.010 | 0.669 ± 0.010 | 0.656 ± 0.015 | **0.652** ± 0.011 | **0.664** ± 0.006 | **0.659** ± 0.007 |
+| Tunable MAGMAX | **0.689** ± 0.032 | **0.681** ± 0.003 | **0.657** ± 0.006 | 0.612 ± 0.012 | 0.636 ± 0.008 | 0.655 ± 0.007 |
+
+#### t5-base, Order 6
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.496 ± 0.193 | 0.543 ± 0.193 | 0.481 ± 0.159 | 0.491 ± 0.173 | 0.518 ± 0.172 | 0.506 ± 0.178 |
+| Random Mix | 0.593 ± 0.019 | 0.640 ± 0.018 | 0.578 ± 0.025 | 0.586 ± 0.022 | 0.608 ± 0.026 | 0.601 ± 0.022 |
+| Average | 0.591 ± 0.016 | 0.638 ± 0.015 | 0.577 ± 0.021 | 0.584 ± 0.018 | 0.606 ± 0.022 | 0.599 ± 0.018 |
+| TIES-Merging | 0.657 ± 0.025 | 0.706 ± 0.017 | 0.619 ± 0.020 | 0.636 ± 0.023 | 0.661 ± 0.022 | 0.656 ± 0.021 |
+| MAGMAX | **0.678** ± 0.009 | **0.732** ± 0.008 | 0.623 ± 0.014 | 0.652 ± 0.011 | 0.678 ± 0.010 | 0.673 ± 0.010 |
+| Tunable MAGMAX | 0.674 ± 0.007 | 0.718 ± 0.018 | **0.665** ± 0.007 | **0.674** ± 0.002 | **0.705** ± 0.003 | **0.687** ± 0.003 |
+
+#### t5-large（LoRA）, Order 4
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.752 ± 0.020 | 0.743 ± 0.017 | 0.674 ± 0.018 | 0.700 ± 0.019 | 0.696 ± 0.020 | 0.713 ± 0.019 |
+| Random Mix | 0.709 ± 0.048 | 0.692 ± 0.050 | 0.654 ± 0.045 | 0.674 ± 0.045 | 0.670 ± 0.044 | 0.680 ± 0.047 |
+| Average | 0.708 ± 0.051 | 0.692 ± 0.050 | 0.655 ± 0.045 | 0.675 ± 0.047 | 0.669 ± 0.044 | 0.680 ± 0.047 |
+| TIES-Merging | 0.794 ± 0.017 | 0.777 ± 0.015 | 0.714 ± 0.017 | 0.746 ± 0.019 | 0.735 ± 0.015 | 0.753 ± 0.016 |
+| MAGMAX | 0.803 ± 0.019 | 0.792 ± 0.016 | 0.730 ± 0.016 | 0.759 ± 0.020 | 0.748 ± 0.019 | 0.766 ± 0.018 |
+| Tunable MAGMAX | **0.822** ± 0.047 | **0.851** ± 0.003 | **0.769** ± 0.051 | **0.776** ± 0.061 | **0.789** ± 0.016 | **0.802** ± 0.035 |
+
+#### t5-large（LoRA）, Order 5
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.566 ± 0.029 | 0.585 ± 0.018 | 0.592 ± 0.040 | 0.571 ± 0.035 | 0.594 ± 0.023 | 0.582 ± 0.028 |
+| Random Mix | 0.633 ± 0.060 | 0.637 ± 0.061 | 0.638 ± 0.054 | 0.631 ± 0.056 | 0.640 ± 0.058 | 0.636 ± 0.058 |
+| Average | 0.637 ± 0.057 | 0.640 ± 0.059 | 0.641 ± 0.052 | 0.634 ± 0.052 | 0.641 ± 0.056 | 0.638 ± 0.055 |
+| TIES-Merging | **0.682** ± 0.017 | 0.692 ± 0.017 | **0.671** ± 0.019 | **0.667** ± 0.018 | 0.685 ± 0.020 | **0.679** ± 0.018 |
+| MAGMAX | 0.655 ± 0.016 | 0.668 ± 0.027 | 0.652 ± 0.013 | 0.643 ± 0.010 | 0.662 ± 0.012 | 0.656 ± 0.011 |
+| Tunable MAGMAX | 0.677 ± 0.050 | **0.739** ± 0.053 | 0.603 ± 0.018 | 0.616 ± 0.038 | **0.694** ± 0.057 | 0.666 ± 0.042 |
+
+#### t5-large（LoRA）, Order 6
+
+| 手法 | D1 (0.5,0.5) | D2 (0.8,0.2) | D3 (1/3,1/3,1/3) | D4 (0.4,0.4,0.2) | D5 (0.6,0.2,0.2) | 平均 |
+|---|---|---|---|---|---|---|
+| Baseline | 0.670 ± 0.021 | 0.717 ± 0.012 | 0.628 ± 0.017 | 0.652 ± 0.019 | 0.674 ± 0.015 | 0.668 ± 0.017 |
+| Random Mix | 0.669 ± 0.003 | 0.695 ± 0.012 | 0.632 ± 0.004 | 0.655 ± 0.005 | 0.658 ± 0.012 | 0.662 ± 0.006 |
+| Average | 0.671 ± 0.001 | 0.696 ± 0.011 | 0.636 ± 0.006 | 0.657 ± 0.007 | 0.659 ± 0.013 | 0.664 ± 0.007 |
+| TIES-Merging | 0.684 ± 0.010 | 0.719 ± 0.016 | 0.637 ± 0.010 | 0.664 ± 0.009 | 0.674 ± 0.015 | 0.676 ± 0.011 |
+| MAGMAX | 0.697 ± 0.020 | 0.732 ± 0.026 | 0.645 ± 0.017 | 0.676 ± 0.019 | 0.686 ± 0.022 | 0.687 ± 0.021 |
+| Tunable MAGMAX | **0.735** ± 0.006 | **0.771** ± 0.013 | **0.715** ± 0.020 | **0.722** ± 0.008 | **0.733** ± 0.013 | **0.735** ± 0.011 |
+
+### 3.3 提案手法とベースラインの差（平均の列）
+
+| | t5-base 全 Order | t5-base O4 | t5-base O5 | t5-base O6 | t5-large 全 Order | t5-large O4 | t5-large O5 | t5-large O6 |
+|---|---|---|---|---|---|---|---|---|
+| ベースラインの最良 | MAGMAX 0.707 | MAGMAX 0.789 | MAGMAX 0.659 | MAGMAX 0.673 | MAGMAX 0.703 | MAGMAX 0.766 | TIES 0.679 | MAGMAX 0.687 |
+| Tunable − ベースラインの最良 | +0.010 | +0.020 | −0.004 | +0.015 | +0.031 | +0.035 | −0.014 | +0.048 |
+| Tunable − MAGMAX | +0.010 | +0.020 | −0.004 | +0.015 | +0.031 | +0.035 | +0.010 | +0.048 |
+| Tunable がベースライン全部を上回った列の数（D1〜D5） | 5 / 5 | 5 / 5 | 3 / 5 | 3 / 5 | 5 / 5 | 5 / 5 | 2 / 5 | 5 / 5 |
+
+### 3.4 全タスクを均等に混ぜた環境（target 26）
+
+論文の表の列ではないが、15 タスクすべてを均等に混ぜた環境での精度を示す（全 Order の平均）。この環境では提案手法は全タスクを選ぶので、MAGMAX との違いは割り当て数の上限だけになる。
+
+| 手法 | t5-base | t5-large（LoRA） |
+|---|---|---|
+| Baseline | 0.593 ± 0.083 | 0.630 ± 0.009 |
+| Random Mix | 0.571 ± 0.017 | 0.596 ± 0.021 |
+| Average | 0.574 ± 0.016 | 0.593 ± 0.021 |
+| TIES-Merging | 0.644 ± 0.021 | 0.662 ± 0.015 |
+| MAGMAX | **0.696** ± 0.014 | **0.687** ± 0.015 |
+| Tunable MAGMAX | 0.651 ± 0.011 | 0.677 ± 0.032 |
+
+### 3.5 O-LoRA の報告値との比較（全テストデータでの Average Accuracy）
+
+O-LoRA [2] の評価指標 Average Accuracy（最後のタスクの学習後に、全 15 タスクのテストデータ全件で測った精度のタスク平均）でも、マージ後の 1 つのモデルを評価した（`full_testsets_seed{s}.json`）。提案手法はターゲット環境ごとにモデルが変わるので、この指標はない。値は %、本実験は 3 seed の平均 ± 標準偏差。
+
+| 手法 | Order 4 | Order 5 | Order 6 | 平均 |
+|---|---|---|---|---|
+| **本実験 t5-large（LoRA）** | | | | |
+| Baseline | 60.8 ± 1.5 | 59.7 ± 0.7 | 68.2 ± 0.6 | 62.9 ± 0.7 |
+| Random Mix | 53.2 ± 2.3 | 58.1 ± 2.9 | 70.2 ± 0.8 | 60.5 ± 0.9 |
+| Average | 53.1 ± 2.4 | 58.3 ± 3.1 | 70.2 ± 0.8 | 60.5 ± 1.0 |
+| TIES-Merging | 61.1 ± 1.0 | 62.9 ± 0.9 | 70.2 ± 1.0 | 64.7 ± 0.8 |
+| MAGMAX | 65.4 ± 1.1 | 63.4 ± 1.5 | 70.5 ± 2.1 | 66.4 ± 0.9 |
+| **本実験 t5-base（全パラメータ）** | | | | |
+| Baseline | 64.1 ± 1.5 | 62.0 ± 0.8 | 52.6 ± 22.3 | 59.5 ± 7.4 |
+| MAGMAX | 66.8 ± 0.7 | 64.1 ± 1.8 | 70.6 ± 0.7 | 67.2 ± 0.6 |
+| **O-LoRA [2] の Table 2（T5-large）** | | | | |
+| SeqFT（全パラメータの逐次学習） | 7.4 | 7.4 | 7.5 | 7.4 |
+| IncLoRA（タスクごとに新しい LoRA を追加） | 63.3 | 58.5 | 61.7 | 61.2 |
+| O-LoRA | 72.3 | 64.8 | 71.6 | 69.6 |
+| ProgPrompt [3] | 78.0 | 77.7 | 77.9 | 77.9 |
+| MTL（全タスクの同時学習、上限） | 76.5 | 76.5 | 76.5 | 76.5 |
+
+- 本実験の t5-large の Baseline は、前のタスクの LoRA を重みに足し込んで固定し、新しい LoRA を学習するので、O-LoRA の IncLoRA と同じ構成である。平均は 62.9 で、IncLoRA の報告値 61.2 と近い（Order 6 は 68.2 対 61.7 と差が大きい）。
+- MAGMAX の平均（66.4）は IncLoRA より高いが、O-LoRA（69.6）には届かない。
+- O-LoRA の SeqFT（7.4）は t5-large の全パラメータを lr 1e-3 で学習したもので、本実験の t5-base（lr 1e-4）とはモデルの大きさも学習率も違うので、直接は比べられない。
+
+## 4. 観察
+
+**全 Order の平均では、提案手法が両モデルの 5 列すべてで最高だった**
+- t5-large（LoRA）では、ベースラインの最良（MAGMAX）との差が平均で +0.031 だった。差は偏った混合比で大きい（D2：+0.056、D5：+0.040）。vision（CIFAR-100）でも、偏った混合比で差が大きくなる傾向があった。
+- t5-base では差が +0.010 と小さい。D1 と D3 では +0.022、+0.026 だが、D2・D4・D5 では +0.001〜+0.003 で、MAGMAX とほぼ同等である。
+
+**Order ごとに見ると、提案手法が負ける場合がある**
+- t5-base の Order 5 では、平均で MAGMAX をわずかに下回った（0.655 対 0.659）。D1〜D3 では上回るが、D4（0.612 対 0.652）と D5（0.636 対 0.664）で下回る。
+- t5-base の Order 6 では、2 タスクの環境（D1、D2）で MAGMAX を下回り、3 タスクの環境（D3〜D5）で上回った。
+- t5-large の Order 5 では、MAGMAX は上回る（+0.010）が、TIES-Merging には平均で負けた（0.666 対 0.679）。D3（0.603 対 0.671）と D4（0.616 対 0.667）で大きく負けている。標準偏差も 0.04〜0.06 と大きい。
+- vision（CIFAR-100）では、提案手法（Label）が 3 設定 × 5 環境の 15 セルすべてで最高だった。LSB では、全 Order の平均では同じ結果になるが、Order ごとの安定性は vision より低い。
+
+**全タスクを均等に混ぜた環境では、提案手法は MAGMAX に負ける**
+- target 26 では、t5-base で −0.045、t5-large で −0.010 だった。タスクの選択が起きないこの環境では、割り当て数の上限だけが効くので、MAGMAX が選ぶはずの |値| が最大の要素の一部を使えなくなる。LSB での提案手法の優位は、ターゲット環境に含まれないタスクを除くことから来ていると考えられる（詳しくは [nlp_results_report.md](nlp_results_report.md) の §3）。
+
+**Random Mix と Average は、逐次学習の最終モデル（Baseline）より悪くなることがある**
+- t5-base では、全 Order の平均で Baseline（0.620）より低い（0.593）。逐次学習のタスクベクトルは前のタスクの学習を含むので、要素をランダムに選んだり平均したりすると、後半のタスクの情報が薄まると考えられる。t5-large（LoRA）では Baseline より少し高い（0.659〜0.661 対 0.654）。
+
+## 5. 実行の記録
+
+| 日時 | 内容 |
+|---|---|
+| 2026-10-02 〜 10-04 | t5-large（LoRA）の学習とマージ。Orders 4–6 × seed 3–5 の 9 run |
+| 2026-10-11 〜 10-12 | t5-base（全パラメータ）の学習とマージ。[scripts/nlp/run_t5-base_lsb.sh](../scripts/nlp/run_t5-base_lsb.sh) で、Order ごとに GPU を 1 枚ずつ使って並列に実行 |
+
+**t5-base の seed = 3 は条件がそろっていない。** 2026-10-11 11:44 に同じスクリプトが 2 つ同時に起動し、seed = 3 の学習が途中まで二重に走った。そのため、二重実行中に書かれたチェックポイント（Order 4 と 5 は task 0–6、Order 6 は task 0）を、残りの学習がそのまま引き継いでいる。タスクベクトルは各チェックポイントと zero-shot の差として独立に計算するので、マージ自体は壊れていない。ただ、seed = 3 は 1 本の学習の流れになっていない。seed = 4 と 5 は影響を受けていない。やり直しはしていない。
+
+**t5-base の Order 6、seed = 3 だけ Baseline が崩れている。** 最終モデルの全テストデータでの精度は 30.08% で、seed = 4 と 5（約 60%）の半分しかない。AG News 0.3%、Yahoo 0.0%、DBpedia 1.7% など、多くのタスクでほぼ正解できていない。そのため、t5-base の Order 6 の Baseline は標準偏差が極端に大きい（ターゲット環境の平均で 0.506 ± 0.178）。マージした手法はこの seed でも正常である。
+
+結果の数は、どの設定・手法・seed でも 26 環境（target 1–26）そろっている。
+
+## 6. 検証していないこと
+
+- **O-LoRA との設定の違いの影響**は調べていない。主な違いは、(1) 直交化の損失を使っていない、(2) GPU 1 枚と勾配累積でバッチ 64 を作っている（O-LoRA は 8 GPU）、(3) 学習データは O-LoRA のリポジトリが配布するもの（1 クラス 1,000 件。CB と COPA はそれより少ない）を全件使っている（O-LoRA の論文本文には「各タスク 1,000 件を無作為に選ぶ」とある）、の 3 点である。
+- **t5-base の学習率 1e-4** は探索して決めた値ではない。
+- **t5-large の全パラメータ学習**は実行していない。そのため、同じモデルで LoRA と全パラメータ学習を比べることはできない（vision では [vision_lora_report.md](vision_lora_report.md) で比べている）。
+- **Order 5 で提案手法が負ける理由**（t5-base の D4・D5、t5-large の D3・D4）は調べていない。
+- **ターゲット環境の評価データ数**は 200 件の 1 通りだけで、vision（T に応じて 1000 / 500 / 200 件）とはそろえていない。
+- **LoRA の設定**は 1 通り（r = 8、alpha = 32、q と v、lr 1e-3）しか試していない。
+
+## 参考文献
+
+1. K. Hiroshima, K. Uchida, S. Shirakawa. Tunable MAGMAX: Preference-Aware Model Merging for Continual Learning. ICPR 2025.（[refs/ICPR2025_hiroshima_v3_fixedtypos.pdf](../refs/ICPR2025_hiroshima_v3_fixedtypos.pdf)）
+2. X. Wang, T. Chen, Q. Ge, H. Xia, R. Bao, R. Zheng, Q. Zhang, T. Gui, X. Huang. Orthogonal Subspace Learning for Language Model Continual Learning. Findings of the Association for Computational Linguistics: EMNLP 2023, pp. 10658–10671, 2023.（[refs/2023.findings-emnlp.715.pdf](../refs/2023.findings-emnlp.715.pdf)）
+3. A. Razdaibiedina, Y. Mao, R. Hou, M. Khabsa, M. Lewis, A. Almahairi. Progressive Prompts: Continual Learning for Language Models. The Eleventh International Conference on Learning Representations (ICLR), 2023.
+4. X. Zhang, J. Zhao, Y. LeCun. Character-level Convolutional Networks for Text Classification. Advances in Neural Information Processing Systems 28, 2015.
+5. A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, S. R. Bowman. GLUE: A Multi-Task Benchmark and Analysis Platform for Natural Language Understanding. arXiv:1804.07461, 2018.
+6. A. Wang, Y. Pruksachatkun, N. Nangia, A. Singh, J. Michael, F. Hill, O. Levy, S. R. Bowman. SuperGLUE: A Stickier Benchmark for General-Purpose Language Understanding Systems. Advances in Neural Information Processing Systems 32, 2019.
+7. A. L. Maas, R. E. Daly, P. T. Pham, D. Huang, A. Y. Ng, C. Potts. Learning Word Vectors for Sentiment Analysis. Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies (ACL-HLT), 2011.
+8. C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, P. J. Liu. Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer. Journal of Machine Learning Research, 21:1–67, 2020.
+9. E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen. LoRA: Low-Rank Adaptation of Large Language Models. arXiv:2106.09685, 2021（ICLR 2022）.
+10. D. Marczak, B. Twardowski, T. Trzciński, S. Cygert. MAGMAX: Leveraging Model Merging for Seamless Continual Learning. Computer Vision – ECCV 2024, pp. 379–395, 2025.
+11. P. Yadav, D. Tam, L. Choshen, C. A. Raffel, M. Bansal. TIES-Merging: Resolving Interference When Merging Models. Advances in Neural Information Processing Systems 36, pp. 7093–7115, 2023.
+12. M. Wortsman, G. Ilharco, S. Y. Gadre, R. Roelofs, R. Gontijo-Lopes, A. S. Morcos, H. Namkoong, A. Farhadi, Y. Carmon, S. Kornblith, L. Schmidt. Model Soups: Averaging Weights of Multiple Fine-tuned Models Improves Accuracy without Increasing Inference Time. Proceedings of the 39th International Conference on Machine Learning (ICML), PMLR 162, pp. 23965–23998, 2022.
+13. G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, A. Farhadi. Editing Models with Task Arithmetic. The Eleventh International Conference on Learning Representations (ICLR), 2023.
