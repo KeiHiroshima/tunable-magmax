@@ -22,6 +22,7 @@ the old directory names; see the note in postprocessing/utils.py.
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from src.merging.core_space import result_name  # noqa: F401  (re-exported)
 from src.merging.task_vectors import (
     merge_max_abs,
     merge_max_abs_masked_with_targetdata,
@@ -84,21 +85,28 @@ def get_merge_spec(merge_fn_name: str) -> MergeSpec:
         ) from None
 
 
-def apply_merge(spec: MergeSpec, task_vectors: list, **kwargs):
+def apply_merge(spec: MergeSpec, task_vectors: list, core_space=None, **kwargs):
     """Merge `task_vectors` according to `spec`.
 
     This is the only place the post-merge scaling lives, so both backends get
     it — the bug this replaces was the vision path dividing "average" by the
     task count while the NLP path silently returned the raw sum.
+
+    With a `core_space` (src/merging/core_space.py) the merge runs on the
+    task vectors rotated into it, and the result is rotated back.
     """
     if spec.fn is None:
         # "finetune" = the CL baseline: no merging at all, just keep the model
         # as it came out of the last task.
         return task_vectors[-1]
 
+    if core_space is not None:
+        task_vectors = core_space.to_core(task_vectors)
     merged = spec.fn(task_vectors, **kwargs)
     if spec.averaged:
         merged = merged / len(task_vectors)
+    if core_space is not None:
+        merged = core_space.from_core(merged)
     return merged
 
 

@@ -136,3 +136,73 @@ def test_weights_without_a_basis_are_rejected():
     space = CoreSpace.from_adapters(make_adapters(n_tasks=2))
     with pytest.raises(KeyError, match="no Core Space basis"):
         space.to_core([TaskVector(vector={"head.weight": torch.zeros(3, 3)})])
+
+
+# --- merging in Core Space ---------------------------------------------------
+
+
+def test_average_in_core_space_equals_average_in_full_space():
+    """A linear merge commutes with the rotation (the paper's eq. 11), so
+    --merge_space core must not change "average" at all."""
+    from src.merging.registry import apply_merge, get_merge_spec
+
+    adapters = make_adapters(n_tasks=4)
+    space = CoreSpace.from_adapters(adapters)
+    task_vectors = task_vectors_from(adapters, sequential=True)
+    spec = get_merge_spec("average")
+
+    full = apply_merge(spec, task_vectors)
+    core = apply_merge(spec, task_vectors, core_space=space)
+    for key, value in full.vector.items():
+        torch.testing.assert_close(core.vector[key], value, rtol=0, atol=1e-9)
+
+
+@pytest.mark.parametrize("merge_fn", ["magmax", "ties", "random_mix"])
+def test_nonlinear_merges_return_full_space_weights(merge_fn):
+    """Element-wise merges run on the core matrices but hand back d_out x d_in
+    deltas that still lie in the adapters' span."""
+    from src.merging.registry import apply_merge, get_merge_spec
+
+    adapters = make_adapters(n_tasks=3)
+    space = CoreSpace.from_adapters(adapters)
+    task_vectors = task_vectors_from(adapters, sequential=False)
+    merged = apply_merge(get_merge_spec(merge_fn), task_vectors, core_space=space)
+
+    for key, delta in merged.vector.items():
+        assert delta.shape == task_vectors[0].vector[key].shape
+        U_ref, V_ref = space.bases[key]
+        torch.testing.assert_close(U_ref @ U_ref.T @ delta @ V_ref @ V_ref.T, delta)
+
+
+def test_finetune_baseline_is_not_rotated():
+    from src.merging.registry import apply_merge, get_merge_spec
+
+    adapters = make_adapters(n_tasks=2)
+    task_vectors = task_vectors_from(adapters, sequential=True)
+    merged = apply_merge(
+        get_merge_spec("finetune"), task_vectors, core_space=CoreSpace.from_adapters(adapters)
+    )
+    assert merged is task_vectors[-1]
+
+
+def test_masked_magmax_budgets_count_core_matrix_entries():
+    """mask_and_merge_by_weights runs unchanged on the core matrices, so each
+    weight contributes R^2 = (T * r)^2 entries and task i wins int(R^2 * w_i)
+    of them (its own assert checks the per-task counts)."""
+    from src.merging.task_vectors import mask_and_merge_by_weights
+
+    n_tasks = 4
+    adapters = make_adapters(n_tasks=n_tasks)
+    space = CoreSpace.from_adapters(adapters)
+    task_vectors = task_vectors_from(adapters, sequential=True)
+
+    merged_core, num_unaligned, num_params_all = mask_and_merge_by_weights(
+        space.to_core(task_vectors), [0.1, 0.2, 0.3, 0.4], seed=0
+    )
+
+    R = n_tasks * R_LORA
+    assert num_params_all == len(SHAPES) * R * R
+    assert set(num_unaligned) == {f"task_{i + 1}" for i in range(n_tasks)}
+    merged = space.from_core(merged_core)
+    for key, delta in merged.vector.items():
+        assert delta.shape == task_vectors[0].vector[key].shape

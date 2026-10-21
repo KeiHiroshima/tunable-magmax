@@ -10,7 +10,7 @@ from src.datasets.common import (
 )
 from src.datasets.registry import get_dataset
 from src.heads import get_classification_head
-from src.merging.registry import apply_merge
+from src.merging.registry import apply_merge, result_name
 from src.modeling import ImageClassifier, ImageEncoder
 from src.target_env import load_target_envs
 
@@ -85,6 +85,7 @@ def _compute_similarity_weights(
     spec,
     args,
     pretrained_checkpoint=None,
+    core_space=None,
 ):
     """Call a target-data-driven merge, returning
     (merged_tv, weights_each_task, similarity_metric).
@@ -101,6 +102,7 @@ def _compute_similarity_weights(
         similarity_metric=args.similarity_metric,
         args=args,
         pretrained_checkpoint=pretrained_checkpoint,
+        core_space=core_space,
     )
 
 
@@ -112,8 +114,10 @@ def _build_merged_encoder(
     scaling_coef,
     train_subset_each_task=None,
     target_dataset_meta=None,
+    core_space=None,
 ):
-    """Merge task vectors and apply them to the pretrained model.
+    """Merge task vectors and apply them to the pretrained model — in Core
+    Space when `core_space` is given (--merge_space core).
 
     Returns:
         image_encoder:     the merged image encoder.
@@ -127,9 +131,11 @@ def _build_merged_encoder(
             spec,
             args,
             pretrained_checkpoint=pretrained_checkpoint,
+            core_space=core_space,
         )
         log_data_merge_fn = {
             "merging_function": spec.name,
+            "merge_space": args.merge_space,
             "similarity_metric": similarity_metric,
             "weights_each_task": [float(v) for v in weights_each_task],
             "scaling_coefficient": float(scaling_coef),
@@ -137,9 +143,10 @@ def _build_merged_encoder(
     else:
         # apply_merge owns the "finetune" (no merging) case and the post-merge
         # division for "average", so both backends get identical treatment.
-        merged_tv = apply_merge(spec, task_vectors)
+        merged_tv = apply_merge(spec, task_vectors, core_space=core_space)
         log_data_merge_fn = {
             "merging_function": spec.name,
+            "merge_space": args.merge_space,
             "scaling_coefficient": float(scaling_coef),
         }
 
@@ -149,7 +156,7 @@ def _build_merged_encoder(
 
 def _save_target_eval_results(log_data, spec, args, suffix_dir, file_name):
     """Persist evaluation results as JSON, merging with any pre-existing content."""
-    out_dir = f"{args.results_db}/{spec.name}/{suffix_dir}"
+    out_dir = f"{args.results_db}/{result_name(spec.name, args.merge_space)}/{suffix_dir}"
     os.makedirs(out_dir, exist_ok=True)
     json_path = f"{out_dir}{file_name}"
     existing = json.loads(open(json_path).read()) if os.path.exists(json_path) else {}
@@ -160,7 +167,7 @@ def _save_target_eval_results(log_data, spec, args, suffix_dir, file_name):
 
 
 def evaluate_merged_fts_on_target_data(
-    task_vectors, args, spec, scaling_coef, pretrained_checkpoint=None
+    task_vectors, args, spec, scaling_coef, pretrained_checkpoint=None, core_space=None
 ):
     assert args.num_train_data_each_task is not None, (
         "Please provide num_train_data_each_task for constructing train subsets."
@@ -187,6 +194,9 @@ def evaluate_merged_fts_on_target_data(
     )
 
     is_similarity_merge = spec.needs_target_data
+    # Directory and file names: "<merge_fn>" or, under --merge_space core,
+    # "<merge_fn>-core".
+    name = result_name(spec.name, args.merge_space)
 
     for env in load_target_envs(args, n_tasks=args.n_splits):
         # merge_max_abs_masked_with_targetdata names its own log file after
@@ -196,12 +206,12 @@ def evaluate_merged_fts_on_target_data(
         suffix = f"{args.similarity_metric}_" if is_similarity_merge else ""
         suffix_dir = f"{args.similarity_metric}/" if is_similarity_merge else ""
         file_name = (
-            f"{spec.name}_lambda{scaling_coef}_{suffix}"
+            f"{name}_lambda{scaling_coef}_{suffix}"
             f"target{env.target_id}_seed{args.seed}.json"
         )
 
         if utils.has_evaluation_result(
-            f"{args.results_db}/{spec.name}/{suffix_dir}{file_name}"
+            f"{args.results_db}/{name}/{suffix_dir}{file_name}"
         ):
             logger.info(
                 f"Result file {file_name} already exists in {args.results_db}. Skipping evaluation."
@@ -238,6 +248,7 @@ def evaluate_merged_fts_on_target_data(
             scaling_coef,
             train_subset_each_task=train_subset_each_task,
             target_dataset_meta=target_dataset_meta,
+            core_space=core_space,
         )
 
         acc_list = eval_given_dataset(
@@ -258,7 +269,7 @@ def evaluate_merged_fts_on_target_data(
         )
         actual_suffix = f"{actual_metric}_" if is_similarity_merge else ""
         file_name = (
-            f"{spec.name}_lambda{args.coeff}_{actual_suffix}"
+            f"{name}_lambda{args.coeff}_{actual_suffix}"
             f"target{args.target_id}_seed{args.seed}.json"
         )
 

@@ -22,6 +22,7 @@ def _args(**overrides):
         model="ViT-B-16",
         dataset="CIFAR100",
         merge_fn="magmax",
+        merge_space="full",
         similarity_metric="labels",
         seed=3,
         coeff=0.5,
@@ -50,6 +51,7 @@ def test_merge_metadata_keys_for_a_plain_merge_fn(real_task_vectors):
     # it used to be ("merge_max_abs").
     assert log_data == {
         "merging_function": "magmax",
+        "merge_space": "full",
         "scaling_coefficient": 0.5,
     }
 
@@ -67,6 +69,7 @@ def test_merge_metadata_keys_for_the_finetune_baseline(real_task_vectors):
 
     assert log_data == {
         "merging_function": "finetune",
+        "merge_space": "full",
         "scaling_coefficient": 0.5,
     }
 
@@ -118,6 +121,16 @@ def test_results_file_without_similarity_subdirectory(tmp_path):
     assert (tmp_path / "magmax" / "r.json").exists()
 
 
+def test_core_results_go_under_their_own_directory(tmp_path):
+    args = _args(results_db=str(tmp_path), merge_space="core")
+    _save_target_eval_results(
+        {"overall_accuracy": 0.5}, get_merge_spec("magmax"), args, "", "r.json"
+    )
+
+    assert (tmp_path / "magmax-core" / "r.json").exists()
+    assert not (tmp_path / "magmax").exists()
+
+
 def test_preexisting_file_content_wins_over_the_new_log_data(tmp_path):
     """Surprising but load-bearing: `log_data.update(existing)` means values
     already in the file are NOT overwritten. That is how num_unaligned /
@@ -139,7 +152,8 @@ def test_preexisting_file_content_wins_over_the_new_log_data(tmp_path):
     assert result["overall_accuracy"] == 0.1  # existing wins, new value dropped
 
 
-def test_merge_and_eval_write_to_the_same_results_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("merge_space,dir_name", [("full", "masked_magmax_with_targetdata"), ("core", "masked_magmax_with_targetdata-core")])
+def test_merge_and_eval_write_to_the_same_results_file(tmp_path, monkeypatch, merge_space, dir_name):
     """The proposed method's results are assembled by two writers.
 
     merge_max_abs_masked_with_targetdata records num_unaligned/num_params_all
@@ -157,23 +171,24 @@ def test_merge_and_eval_write_to_the_same_results_file(tmp_path, monkeypatch):
     args = _args(
         results_db=str(tmp_path),
         merge_fn="masked_magmax_with_targetdata",
+        merge_space=merge_space,
         similarity_metric="labels",
     )
     spec = get_merge_spec("masked_magmax_with_targetdata")
 
     # what the merge function writes
-    merge_dir = Path(args.results_db) / args.merge_fn / args.similarity_metric
+    merge_dir = Path(args.results_db) / dir_name / args.similarity_metric
     merge_dir.mkdir(parents=True)
     merge_file = (
         merge_dir
-        / f"{args.merge_fn}_lambda{args.coeff}_{args.similarity_metric}"
+        / f"{dir_name}_lambda{args.coeff}_{args.similarity_metric}"
         f"_target{args.target_id}_seed{args.seed}.json"
     )
     merge_file.write_text(_json.dumps({"num_unaligned": {"task_1": 5}, "num_params_all": 99}))
 
     # what eval.py writes afterwards, via the shared spec name
     file_name = (
-        f"{spec.name}_lambda{args.coeff}_{args.similarity_metric}_"
+        f"{dir_name}_lambda{args.coeff}_{args.similarity_metric}_"
         f"target{args.target_id}_seed{args.seed}.json"
     )
     _save_target_eval_results(
@@ -184,7 +199,7 @@ def test_merge_and_eval_write_to_the_same_results_file(tmp_path, monkeypatch):
     assert written["num_unaligned"] == {"task_1": 5}, "the merge diagnostics were lost"
     assert written["num_params_all"] == 99
     assert "overall_accuracy" in written, "the two writers disagree on the path"
-    assert [p.name for p in Path(args.results_db).iterdir()] == [args.merge_fn]
+    assert [p.name for p in Path(args.results_db).iterdir()] == [dir_name]
 
 
 def test_merge_function_derives_its_log_path_from_the_cli_name():
@@ -195,7 +210,7 @@ def test_merge_function_derives_its_log_path_from_the_cli_name():
 
     source = inspect.getsource(task_vectors.merge_max_abs_masked_with_targetdata)
 
-    assert 'Path(args.results_db) / args.merge_fn' in source
+    assert "result_name(args.merge_fn, args.merge_space)" in source
     assert '"merge_max_abs_masked_with_targetdata"' not in source
 
 

@@ -41,6 +41,12 @@ import torch
 from src.merging.task_vector import TaskVector
 
 
+def result_name(merge_fn_name: str, merge_space: str) -> str:
+    """The name a merge's results are written under: the --merge_fn value,
+    suffixed "-core" under --merge_space core so the two never share files."""
+    return merge_fn_name if merge_space == "full" else f"{merge_fn_name}-{merge_space}"
+
+
 def _scaled_factors(adapter: dict) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
     """{"<module>.weight": (A, (alpha / r) * B)} — keyed like the task vectors
     built by src.lora.adapter_deltas, with the LoRA scaling folded into B so
