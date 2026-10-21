@@ -157,3 +157,71 @@ def test_build_comparison_table_averages_variants_then_seeds(tmp_path):
     [column] = table.columns  # the "-1 / all tasks" entry must be skipped
     assert column == "2-task (0.5, 0.5)"
     assert table.loc["MAGMAX", column] == "0.750 ± 0.071"
+
+
+# --- --merge_space core results ----------------------------------------------
+
+
+def test_core_keys_resolve_to_the_core_results_directory(tmp_path):
+    """src/eval.py writes core results as <merge_fn>-core/... with the same
+    "-core" in the file name; the proposed method's metric stays last."""
+    from postprocessing.results import with_merge_space
+
+    core = with_merge_space(
+        {"magmax": "MAGMAX", "masked_magmax_with_targetdata-labels": "Tunable MAGMAX (Labels)"},
+        "core",
+    )
+    assert core == {
+        "magmax-core": "MAGMAX (Core)",
+        "masked_magmax_with_targetdata-core-labels": "Tunable MAGMAX (Labels) (Core)",
+    }
+
+    path_fn = vision_result_path(str(tmp_path), 0.5)
+    assert path_fn("magmax-core", 3, 7) == (
+        f"{tmp_path}/magmax-core/magmax-core_lambda0.5_target3_seed7.json"
+    )
+    assert path_fn("masked_magmax_with_targetdata-core-labels", 3, 7) == (
+        f"{tmp_path}/masked_magmax_with_targetdata-core/labels/"
+        "masked_magmax_with_targetdata-core_lambda0.5_labels_target3_seed7.json"
+    )
+
+
+def test_nlp_core_keys_keep_the_bare_proposed_method():
+    from postprocessing.results import with_merge_space
+
+    core = with_merge_space(_default_competitors("nlp"), "core")
+    assert "masked_magmax_with_targetdata-core" in core
+    assert parse_competitor_key("masked_magmax_with_targetdata-core")[0] == (
+        "masked_magmax_with_targetdata-core"
+    )
+
+
+def test_both_merge_spaces_list_full_then_core():
+    from postprocessing.results import with_merge_space
+
+    both = with_merge_space({"ties": "TIES-Merging"}, "both")
+    assert list(both) == ["ties", "ties-core"]
+
+
+def test_core_results_paths_match_what_eval_writes(tmp_path):
+    """The two sides spell the path independently (postprocessing/ never
+    imports src/), so pin them against each other."""
+    from argparse import Namespace
+
+    from src.eval import _save_target_eval_results
+    from src.merging.registry import get_merge_spec
+
+    args = Namespace(results_db=str(tmp_path), merge_space="core")
+    file_name = "masked_magmax_with_targetdata-core_lambda0.5_labels_target3_seed7.json"
+    _save_target_eval_results(
+        {"overall_accuracy": 0.5},
+        get_merge_spec("masked_magmax_with_targetdata"),
+        args,
+        "labels/",
+        file_name,
+    )
+
+    path = vision_result_path(str(tmp_path), 0.5)(
+        "masked_magmax_with_targetdata-core-labels", 3, 7
+    )
+    assert Path(path).exists()

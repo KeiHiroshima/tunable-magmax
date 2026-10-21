@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `import results`
 
 from results import (  # noqa: E402
     COMPETITOR_ALL_DICT,
+    with_merge_space,
     load_overall_accuracy,
     load_target_data_config,
     nlp_result_path,
@@ -56,6 +57,12 @@ def _parse_args():
 
     # vision
     p.add_argument("--results_db", help="vision: the --results_db directory results were written under")
+    p.add_argument(
+        "--merge_space",
+        default="full",
+        choices=["full", "core", "both"],
+        help="read the --merge_space core results (<merge_fn>-core) instead of, or beside, the full ones",
+    )
     p.add_argument("--lambda_", type=float, default=0.5, help="vision: the --coeff/lambda merges were run with")
 
     # nlp
@@ -136,10 +143,13 @@ def build_comparison_table(
 def main():
     args = _parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
-    competitor_dict = (
-        {k: COMPETITOR_ALL_DICT[k] for k in args.competitors.split(",")}
-        if args.competitors
-        else _default_competitors(args.backend)
+    competitor_dict = with_merge_space(
+        (
+            {k: COMPETITOR_ALL_DICT[k] for k in args.competitors.split(",")}
+            if args.competitors
+            else _default_competitors(args.backend)
+        ),
+        args.merge_space,
     )
     dataset_configs = load_target_data_config(str(REPO_ROOT / "configs" / f"{args.target_config}.json"))
     path_fn = _build_path_fn(args)

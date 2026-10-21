@@ -48,19 +48,33 @@ COMPETITOR_ALL_DICT = {
 # ---------------------------------------------------------------------------
 
 
+# --similarity_metric values (src/args.py), which vision competitor keys of the
+# proposed method end in.
+SIMILARITY_METRICS = (
+    "labels", "cosine", "mmd", "ot", "cosine_embedded", "mmd_embedded", "ot_embedded",
+)
+
+
 def parse_competitor_key(key: str) -> tuple[str, str, str | None, str]:
     """Decompose a competitor_dict key into (merge_fn, similarity_metric, metric_name, metric_name_path).
+
+    `merge_fn` here is the name results are written under, so a
+    --merge_space core key keeps its "-core" (see with_merge_space).
 
     Example:
         "masked_magmax_with_targetdata-ot_embedded"
         -> ("masked_magmax_with_targetdata", "ot_embedded_", "ot_embedded", "ot_embedded/")
 
+        "masked_magmax_with_targetdata-core-labels"
+        -> ("masked_magmax_with_targetdata-core", "labels_", "labels", "labels/")
+
         "magmax"
         -> ("magmax", "", None, "")
     """
-    if "masked_magmax_with_targetdata" in key:
-        merge_fn = key.split("-")[0]
-        metric_name = key.split("-")[1]
+    head, _, last = key.rpartition("-")
+    if "masked_magmax_with_targetdata" in key and last in SIMILARITY_METRICS:
+        merge_fn = head
+        metric_name = last
         similarity_metric = f"{metric_name}_"
         metric_name_path = f"{metric_name}/"
     else:
@@ -69,6 +83,29 @@ def parse_competitor_key(key: str) -> tuple[str, str, str | None, str]:
         metric_name = None
         metric_name_path = ""
     return merge_fn, similarity_metric, metric_name, metric_name_path
+
+
+def with_merge_space(competitor_dict: dict[str, str], merge_space: str) -> dict[str, str]:
+    """The same competitors as merged under --merge_space `merge_space`:
+    "full" returns them unchanged, "core" their "<merge_fn>-core" results
+    (src/merging/core_space.py::result_name), "both" the two side by side.
+
+    Core keys are derived rather than listed in COMPETITOR_ALL_DICT, whose
+    order fixes the plot colors and whose every entry the default tables
+    expect a result file for.
+    """
+    if merge_space == "full":
+        return dict(competitor_dict)
+    if merge_space == "both":
+        return {**competitor_dict, **with_merge_space(competitor_dict, "core")}
+    assert merge_space == "core", merge_space
+
+    core = {}
+    for key, label in competitor_dict.items():
+        merge_fn, _, metric_name, _ = parse_competitor_key(key)
+        core_key = f"{merge_fn}-core" + (f"-{metric_name}" if metric_name else "")
+        core[core_key] = f"{label} (Core)"
+    return core
 
 
 def resolve_dir_path(
