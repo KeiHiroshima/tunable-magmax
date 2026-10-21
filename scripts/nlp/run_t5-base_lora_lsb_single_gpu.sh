@@ -18,6 +18,8 @@
 # Everything the called scripts read (seeds, merge_fns, ...) can be overridden
 # from the environment, e.g.
 #   orders="4" seeds="3" bash scripts/nlp/run_t5-base_lora_lsb_single_gpu.sh
+#   merge_space=core bash scripts/nlp/run_t5-base_lora_lsb_single_gpu.sh  # Core Space merges
+# (fine-tuning is unchanged, so finished adapters are only merged again).
 # To keep it running after logout:
 #   nohup bash scripts/nlp/run_t5-base_lora_lsb_single_gpu.sh > /dev/null 2>&1 &
 

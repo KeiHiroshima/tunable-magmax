@@ -16,6 +16,11 @@
 # Everything the called scripts read can be overridden from the environment, e.g.
 #   n_splits_list="5" gpu_ids="0" seeds="3" bash scripts/vision/run_lora_sweep.sh
 # Only one sweep may run at a time: two would train the same splits at once.
+#
+# merge_space=core merges in Core Space instead (src/merging/core_space.py).
+# Fine-tuning is unchanged, so on finished adapters it only merges, e.g.
+#   merge_space=core merge_fns="average ties magmax masked_magmax_with_targetdata" \
+#       bash scripts/vision/run_lora_sweep.sh
 
 export finetune_mode=lora
 # The merges run in parallel and are CPU-heavy (the masked merge, OT). Left

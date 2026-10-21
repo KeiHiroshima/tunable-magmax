@@ -183,6 +183,13 @@ similarity), or `ot_embedded` / `cosine_embedded` / `mmd_embedded` (feature-spac
 distances). The raw `cosine` / `mmd` / `ot` variants skip the encoder and
 compare pixels directly.
 
+`--merge_space core` (`--finetune_mode lora` only) runs any `--merge_fn` in
+Core Space (Panariello et al., NeurIPS 2025): each LoRA task vector is rotated
+into reference bases shared by all tasks, merged there, and rotated back.
+`--merge_space full` (the default) merges the adapted weights as they are.
+Core results go under `{merge_fn}-core`; the scripts take it as
+`merge_space=core`. See [docs/core_space.md](docs/core_space.md).
+
 ### Target environments
 
 A target environment is a mixture of some of the trained tasks, in some ratio.
@@ -276,6 +283,7 @@ bash scripts/vision/finetune_merge.sh
 | `--lr_schedule` | `cosine` | StdCL/LSB: `constant` (no warmup) |
 | `--finetune_mode` | `full` | `full` or `lora` (StdCL/LSB, and CIFAR100/ImageNetR: LoRA on the image tower's q/v) |
 | `--grad_accum_steps` | 1 | NLP only: micro-batches per optimizer step |
+| `--merge_space` | `full` | `core`: merge in Core Space (`--finetune_mode lora` only; see above) |
 | `--scaling_coef` | 0.5 | StdCL/LSB: scale of the merged task vector |
 | `--eval_full_testsets` | off | StdCL/LSB: also report Average Accuracy (see above) |
 | `--warmup_ratio` | 0.1 | see below |

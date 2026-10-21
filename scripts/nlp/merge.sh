@@ -31,13 +31,22 @@ if [ "${model}" = "t5-large" ]; then
 else
     finetune_mode=${finetune_mode:-full}
 fi
+# full: merge in the adapted weights' own coordinates. core: rotate the LoRA
+# task vectors into Core Space first (src/merging/core_space.py; lora only);
+# results go under <merge_fn>-core so they never mix with the full ones.
+merge_space=${merge_space:-full}  # full core
 # 1: also score single-model merges on every task's whole test split
 # (O-LoRA's Average Accuracy). Ignored by masked_magmax_with_targetdata.
 eval_full_testsets=${eval_full_testsets:-1}
 full_flag=$([ "${eval_full_testsets}" = "1" ] && echo --eval_full_testsets || true)
 
+method_tag=${merge_fn}
+if [ "${merge_space}" != "full" ]; then
+    method_tag=${method_tag}-${merge_space}
+fi
+
 echo "======================================================================================"
-echo "Merging ${model} (${finetune_mode}) for target data on ${dataset} (order: ${task_seq}, merge_fn: ${merge_fn}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
+echo "Merging ${model} (${finetune_mode}) for target data on ${dataset} (order: ${task_seq}, merge_fn: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
 echo "======================================================================================"
 
 out_dir=outs/${model}/nlp_classification/${dataset}-${finetune_mode}/taskseq_${task_seq}
@@ -55,7 +64,8 @@ uv run python merge_for_targetdata.py \
     --seed ${seed} \
     --gpu_id ${gpu_id} \
     --merge_fn ${merge_fn} \
+    --merge_space ${merge_space} \
     --target_config ${target_config} \
     --num_target_data ${num_target_data} \
     ${full_flag} \
-        |& tee -a ${out_dir}/merge-${merge_fn}-${target_config}-epochs:${epochs}-seed:${seed}.out
+        |& tee -a ${out_dir}/merge-${method_tag}-${target_config}-epochs:${epochs}-seed:${seed}.out
