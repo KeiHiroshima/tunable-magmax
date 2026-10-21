@@ -183,6 +183,36 @@ def test_lora_is_rejected_outside_stdcl_lsb_and_vision():
         _parse(["x", "--model", "t5-small", "--dataset", "CITB19", "--finetune_mode", "lora"])
 
 
+def test_merge_space_defaults_to_full():
+    assert _parse(MERGE_ARGV).merge_space == "full"
+    assert _parse(NLP_MERGE_ARGV).merge_space == "full"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        MERGE_ARGV + ["--finetune_mode", "lora"],
+        ["x", "--model", "t5-base", "--dataset", "LSB", "--taskseq_pattern", "4",
+         "--finetune_mode", "lora"],
+    ],
+)
+def test_core_merge_space_parses_for_lora_runs(argv):
+    assert _parse(argv + ["--merge_space", "core"]).merge_space == "core"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        MERGE_ARGV,  # vision, full fine-tuning
+        NLP_MERGE_ARGV,  # StdCL, full fine-tuning
+        ["x", "--model", "t5-small", "--dataset", "CITB19"],  # no LoRA at all
+    ],
+)
+def test_core_merge_space_is_rejected_without_lora(argv):
+    with pytest.raises(SystemExit):
+        _parse(argv + ["--merge_space", "core"])
+
+
 def test_nlp_merge_script_argv_parses():
     args = _parse(NLP_MERGE_ARGV)
 
