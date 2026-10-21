@@ -211,3 +211,34 @@ def test_full_mode_task_vectors_reconstruct_the_checkpoints(tmp_path):
 
     finetuned = torch.load(finetuned_path(str(ckpt_dir), 1), weights_only=False)
     assert torch.allclose(_logits(rebuilt), _logits(finetuned), atol=1e-5)
+
+
+def test_core_space_from_saved_adapters_covers_the_task_vectors(lora_run):
+    """--merge_space core on a real LoRA run: the bases built from the saved
+    adapters are keyed like the task vectors, the round trip is lossless,
+    and the linear "average" merge yields the same model in either space."""
+    from src.merging.registry import apply_merge, get_merge_spec
+
+    zeroshot, ckpt_dir, _ = lora_run(n_tasks=3)
+    args = Namespace(finetune_mode="lora", sequential_finetuning=True, merge_space="core")
+    task_vectors = backend._load_task_vectors(args, ckpt_dir, zeroshot, n_tasks=3)
+    core_space = backend._load_core_space(args, ckpt_dir, n_tasks=3)
+
+    assert set(core_space.bases) == set(task_vectors[0].vector)
+    for tv, core in zip(task_vectors, core_space.to_core(task_vectors)):
+        back = core_space.from_core(core)
+        for key, tau in tv.vector.items():
+            assert torch.allclose(back.vector[key], tau, atol=1e-6)
+
+    spec = get_merge_spec("average")
+    full = backend._apply_task_vector(apply_merge(spec, task_vectors), zeroshot, 0.5, "cpu")
+    core = backend._apply_task_vector(
+        apply_merge(spec, task_vectors, core_space=core_space), zeroshot, 0.5, "cpu"
+    )
+    assert torch.allclose(_logits(core), _logits(full), atol=1e-5)
+
+
+def test_full_merge_space_builds_no_core_space(lora_run):
+    _, ckpt_dir, _ = lora_run(n_tasks=2)
+    args = Namespace(finetune_mode="lora", merge_space="full")
+    assert backend._load_core_space(args, ckpt_dir, n_tasks=2) is None
