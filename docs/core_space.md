@@ -86,6 +86,18 @@ merge_space=core bash scripts/nlp/run_t5-base_lora_lsb_single_gpu.sh
 uv run python postprocessing/aggregate_nlp_logs.py --merge_space both
 ```
 
+一部の手法だけを core で実行したときは、build_comparison_table.py の `--core_competitors`（`--merge_space both` と一緒に使う）で、core の結果を読む手法を指定する。指定しなかった手法は full の結果だけを読む。
+
+```bash
+# vision：ベースラインは full、提案手法だけ full と core の両方
+P=masked_magmax_with_targetdata
+uv run python postprocessing/build_comparison_table.py --backend vision \
+    --results_db logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-5/taskseq_A \
+    --target_config target_data_config --seeds 3,4,5 \
+    --competitors finetune,random_mix,average,ties,magmax,$P-ot_embedded,$P-labels \
+    --merge_space both --core_competitors $P-ot_embedded,$P-labels
+```
+
 ## 今後の課題
 
 - **マージ係数 λ の調整**：λ = 0.5（vision は固定、NLP は `--scaling_coef` の既定値）は full 空間のマージ向けに決めた値である。core 空間では同じノルムがずっと少ない要素に集まるため、`magmax` や `ties` の結果の大きさが full と変わり、0.5 が合わない可能性がある。今後ハイパーパラメータとして調整する可能性があるが、今回は対応していない（コード中の `TODO(--merge_space core)` を参照）。

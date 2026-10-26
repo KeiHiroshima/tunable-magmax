@@ -154,9 +154,38 @@ def test_build_comparison_table_averages_variants_then_seeds(tmp_path):
     table = build_comparison_table(path_fn, {"magmax": "MAGMAX"}, dataset_configs, seeds=[3, 4])
 
     # seed 3: mean(0.6, 0.8) = 0.7; seed 4: mean(0.7, 0.9) = 0.8 -> mean 0.75, std over 2 seeds.
-    [column] = table.columns  # the "-1 / all tasks" entry must be skipped
-    assert column == "2-task (0.5, 0.5)"
-    assert table.loc["MAGMAX", column] == "0.750 ± 0.071"
+    # The "-1 / all tasks" entry must be skipped.
+    assert list(table.columns) == ["2-task (0.5, 0.5)", "Average"]
+    assert table.loc["MAGMAX", "2-task (0.5, 0.5)"] == "0.750 ± 0.071"
+
+
+def test_build_comparison_table_average_is_taken_per_seed_before_seeds(tmp_path):
+    """"Average" is the mean over the config columns within each seed, then
+    mean/std across seeds — not the mean of the per-column stds."""
+    path_fn = lambda key, target_id, seed: str(  # noqa: E731
+        tmp_path / f"{key}_{target_id}_{seed}.json"
+    )
+    # config A (target 1): seed 3 -> 0.6, seed 4 -> 0.8
+    # config B (target 2): seed 3 -> 0.8, seed 4 -> 0.6
+    accuracies = {(1, 3): 0.6, (1, 4): 0.8, (2, 3): 0.8, (2, 4): 0.6}
+    for (target_id, seed), acc in accuracies.items():
+        _write_result(tmp_path / f"magmax_{target_id}_{seed}.json", acc)
+
+    dataset_configs = [
+        {
+            "num_task_to_be_fetched": 2,
+            "ratio_task_to_be_fetched": ratio,
+            "variants": [{"target_id": target_id, "random_seed": 1}],
+        }
+        for target_id, ratio in ((1, [0.5, 0.5]), (2, [0.8, 0.2]))
+    ]
+
+    table = build_comparison_table(path_fn, {"magmax": "MAGMAX"}, dataset_configs, seeds=[3, 4])
+
+    # Each config column swings by 0.2 across seeds, but within each seed the
+    # two configs average to 0.7, so "Average" has zero spread.
+    assert table.loc["MAGMAX", "2-task (0.5, 0.5)"] == "0.700 ± 0.141"
+    assert table.loc["MAGMAX", "Average"] == "0.700 ± 0.000"
 
 
 # --- --merge_space core results ----------------------------------------------
