@@ -9,6 +9,7 @@ import torch
 from src.config import get_zeroshot_checkpoint
 from src.datasets.common import get_task_classes
 from src.datasets.registry import get_dataset
+from src.merging.core_space import result_name
 from src.merging.similarity import (
     FeatureCost,
     compute_cosine_similarity,
@@ -16,7 +17,6 @@ from src.merging.similarity import (
     compute_otdd_similarity,
     count_labels,
 )
-from src.merging.core_space import result_name
 from src.merging.task_vector import TaskVector
 from src.merging.ties import merge_methods, state_dict_to_vector, vector_to_state_dict
 from src.modeling import ImageEncoder
