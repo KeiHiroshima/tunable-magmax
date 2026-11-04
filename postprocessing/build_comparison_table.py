@@ -17,6 +17,14 @@ Vision example (reproduces one of make_tables.ipynb's tables):
         --target_config target_data_config --seeds 3,4,5 \\
         --competitors finetune,random_mix,average,ties,magmax,masked_magmax_with_targetdata-labels
 
+Vision, every baseline in full space beside the proposed method's core runs:
+    uv run python postprocessing/build_comparison_table.py --backend vision \\
+        --results_db logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-5/taskseq_A \\
+        --target_config target_data_config --seeds 3,4,5 \\
+        --competitors finetune,random_mix,average,ties,magmax,masked_magmax_with_targetdata-ot_embedded,masked_magmax_with_targetdata-labels \\
+        --merge_space both \\
+        --core_competitors masked_magmax_with_targetdata-ot_embedded,masked_magmax_with_targetdata-labels
+
 NLP example:
     uv run python postprocessing/build_comparison_table.py --backend nlp \\
         --model t5-large --finetune_mode lora --dataset LSB --epochs 1 --taskseq_pattern 4 \\
@@ -62,6 +70,11 @@ def _parse_args():
         default="full",
         choices=["full", "core", "both"],
         help="read the --merge_space core results (<merge_fn>-core) instead of, or beside, the full ones",
+    )
+    p.add_argument(
+        "--core_competitors",
+        help="with --merge_space both: comma-separated keys to read core results for "
+        "(default: every --competitors key); the rest are read in full space only",
     )
     p.add_argument("--lambda_", type=float, default=0.5, help="vision: the --coeff/lambda merges were run with")
 
@@ -124,33 +137,43 @@ def build_comparison_table(
     so every seed contributes equally regardless of how many variants a
     config has.
     """
-    columns: dict[str, pd.Series] = {}
+    per_seed_columns: dict[str, pd.Series] = {}
     for config in dataset_configs:
         if config["num_task_to_be_fetched"] < 0:
             continue  # the "all tasks" entry isn't part of the main comparison grid
         target_ids = [variant["target_id"] for variant in config["variants"]]
 
         long_df = load_overall_accuracy(path_fn, competitor_dict, target_ids, seeds)
-        per_seed = long_df.groupby(["competitor", "seed"])["overall_accuracy"].mean()
-        mean = per_seed.groupby("competitor").mean()
-        std = per_seed.groupby("competitor").std()
-        columns[_config_label(config)] = mean.map("{:.3f}".format) + " ± " + std.map("{:.3f}".format)
+        per_seed_columns[_config_label(config)] = long_df.groupby(["competitor", "seed"])[
+            "overall_accuracy"
+        ].mean()
 
-    table = pd.DataFrame(columns).reindex(list(competitor_dict.values()))
-    return table
+    # One row per (competitor, seed). "Average" is taken within each seed, over
+    # the config columns, before reducing across seeds like the other columns.
+    per_seed = pd.DataFrame(per_seed_columns)
+    per_seed["Average"] = per_seed.mean(axis=1)
+
+    mean = per_seed.groupby("competitor").mean()
+    std = per_seed.groupby("competitor").std()
+    table = mean.map("{:.3f}".format) + " ± " + std.map("{:.3f}".format)
+    return table.reindex(list(competitor_dict.values()))
 
 
 def main():
     args = _parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
-    competitor_dict = with_merge_space(
-        (
-            {k: COMPETITOR_ALL_DICT[k] for k in args.competitors.split(",")}
-            if args.competitors
-            else _default_competitors(args.backend)
-        ),
-        args.merge_space,
+    competitors = (
+        {k: COMPETITOR_ALL_DICT[k] for k in args.competitors.split(",")}
+        if args.competitors
+        else _default_competitors(args.backend)
     )
+    if args.core_competitors:
+        if args.merge_space != "both":
+            raise SystemExit("--core_competitors needs --merge_space both")
+        core_competitors = {k: COMPETITOR_ALL_DICT[k] for k in args.core_competitors.split(",")}
+        competitor_dict = {**competitors, **with_merge_space(core_competitors, "core")}
+    else:
+        competitor_dict = with_merge_space(competitors, args.merge_space)
     dataset_configs = load_target_data_config(str(REPO_ROOT / "configs" / f"{args.target_config}.json"))
     path_fn = _build_path_fn(args)
 
