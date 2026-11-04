@@ -9,6 +9,7 @@ import torch
 from src.config import get_zeroshot_checkpoint
 from src.datasets.common import get_task_classes
 from src.datasets.registry import get_dataset
+from src.merging.core_space import result_name
 from src.merging.similarity import (
     FeatureCost,
     compute_cosine_similarity,
@@ -348,7 +349,12 @@ def merge_max_abs_masked_with_targetdata(
     similarity_metric="cosine",
     args=None,
     pretrained_checkpoint=None,
+    core_space=None,
 ):
+    """`core_space` (--merge_space core): the similarity scores — and the
+    encoders the *_embedded metrics build — still use the task vectors as
+    given; only the masked MAGMAX merge runs on them rotated into Core Space,
+    so its per-task budgets count core-matrix entries."""
     # Was a module-level global; derived from the same args as before, so the
     # value is unchanged for every existing caller.
     if pretrained_checkpoint is None:
@@ -429,8 +435,12 @@ def merge_max_abs_masked_with_targetdata(
     # The seed combines the run and the target environment, so this merge is
     # reproducible and independent of how many targets were merged before it.
     merged_tv, num_unaligned_accum_dict, num_params_all = mask_and_merge_by_weights(
-        task_vectors, weights_each_task, seed=derive_seed(args.seed, args.target_id)
+        task_vectors if core_space is None else core_space.to_core(task_vectors),
+        weights_each_task,
+        seed=derive_seed(args.seed, args.target_id),
     )
+    if core_space is not None:
+        merged_tv = core_space.from_core(merged_tv)
     new_vector = merged_tv.vector
 
     logger.info(f"num_unaligned_accum_dict: {num_unaligned_accum_dict}")
@@ -440,13 +450,15 @@ def merge_max_abs_masked_with_targetdata(
         # written first, here, and eval.py merges its own fields in afterwards.
         # Both sides therefore have to spell the path identically: results live
         # under the --merge_fn value, not under the name of this function.
-        log_dir = Path(args.results_db) / args.merge_fn / args.similarity_metric
+        name = result_name(args.merge_fn, args.merge_space)
+        log_dir = Path(args.results_db) / name / args.similarity_metric
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = (
             log_dir
-            / f"{args.merge_fn}_lambda{args.coeff}_{similarity_metric}_target{args.target_id}_seed{args.seed}.json"
+            / f"{name}_lambda{args.coeff}_{similarity_metric}_target{args.target_id}_seed{args.seed}.json"
         )
         existing = json.loads(log_path.read_text()) if log_path.exists() else {}
+        # Under --merge_space core both count core-matrix entries, not weights.
         existing["num_unaligned"] = num_unaligned_accum_dict
         existing["num_params_all"] = num_params_all
         log_path.write_text(json.dumps(existing, indent=4))

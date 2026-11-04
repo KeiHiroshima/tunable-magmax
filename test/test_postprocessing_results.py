@@ -154,6 +154,103 @@ def test_build_comparison_table_averages_variants_then_seeds(tmp_path):
     table = build_comparison_table(path_fn, {"magmax": "MAGMAX"}, dataset_configs, seeds=[3, 4])
 
     # seed 3: mean(0.6, 0.8) = 0.7; seed 4: mean(0.7, 0.9) = 0.8 -> mean 0.75, std over 2 seeds.
-    [column] = table.columns  # the "-1 / all tasks" entry must be skipped
-    assert column == "2-task (0.5, 0.5)"
-    assert table.loc["MAGMAX", column] == "0.750 ± 0.071"
+    # The "-1 / all tasks" entry must be skipped.
+    assert list(table.columns) == ["2-task (0.5, 0.5)", "Average"]
+    assert table.loc["MAGMAX", "2-task (0.5, 0.5)"] == "0.750 ± 0.071"
+
+
+def test_build_comparison_table_average_is_taken_per_seed_before_seeds(tmp_path):
+    """"Average" is the mean over the config columns within each seed, then
+    mean/std across seeds — not the mean of the per-column stds."""
+    path_fn = lambda key, target_id, seed: str(  # noqa: E731
+        tmp_path / f"{key}_{target_id}_{seed}.json"
+    )
+    # config A (target 1): seed 3 -> 0.6, seed 4 -> 0.8
+    # config B (target 2): seed 3 -> 0.8, seed 4 -> 0.6
+    accuracies = {(1, 3): 0.6, (1, 4): 0.8, (2, 3): 0.8, (2, 4): 0.6}
+    for (target_id, seed), acc in accuracies.items():
+        _write_result(tmp_path / f"magmax_{target_id}_{seed}.json", acc)
+
+    dataset_configs = [
+        {
+            "num_task_to_be_fetched": 2,
+            "ratio_task_to_be_fetched": ratio,
+            "variants": [{"target_id": target_id, "random_seed": 1}],
+        }
+        for target_id, ratio in ((1, [0.5, 0.5]), (2, [0.8, 0.2]))
+    ]
+
+    table = build_comparison_table(path_fn, {"magmax": "MAGMAX"}, dataset_configs, seeds=[3, 4])
+
+    # Each config column swings by 0.2 across seeds, but within each seed the
+    # two configs average to 0.7, so "Average" has zero spread.
+    assert table.loc["MAGMAX", "2-task (0.5, 0.5)"] == "0.700 ± 0.141"
+    assert table.loc["MAGMAX", "Average"] == "0.700 ± 0.000"
+
+
+# --- --merge_space core results ----------------------------------------------
+
+
+def test_core_keys_resolve_to_the_core_results_directory(tmp_path):
+    """src/eval.py writes core results as <merge_fn>-core/... with the same
+    "-core" in the file name; the proposed method's metric stays last."""
+    from postprocessing.results import with_merge_space
+
+    core = with_merge_space(
+        {"magmax": "MAGMAX", "masked_magmax_with_targetdata-labels": "Tunable MAGMAX (Labels)"},
+        "core",
+    )
+    assert core == {
+        "magmax-core": "MAGMAX (Core)",
+        "masked_magmax_with_targetdata-core-labels": "Tunable MAGMAX (Labels) (Core)",
+    }
+
+    path_fn = vision_result_path(str(tmp_path), 0.5)
+    assert path_fn("magmax-core", 3, 7) == (
+        f"{tmp_path}/magmax-core/magmax-core_lambda0.5_target3_seed7.json"
+    )
+    assert path_fn("masked_magmax_with_targetdata-core-labels", 3, 7) == (
+        f"{tmp_path}/masked_magmax_with_targetdata-core/labels/"
+        "masked_magmax_with_targetdata-core_lambda0.5_labels_target3_seed7.json"
+    )
+
+
+def test_nlp_core_keys_keep_the_bare_proposed_method():
+    from postprocessing.results import with_merge_space
+
+    core = with_merge_space(_default_competitors("nlp"), "core")
+    assert "masked_magmax_with_targetdata-core" in core
+    assert parse_competitor_key("masked_magmax_with_targetdata-core")[0] == (
+        "masked_magmax_with_targetdata-core"
+    )
+
+
+def test_both_merge_spaces_list_full_then_core():
+    from postprocessing.results import with_merge_space
+
+    both = with_merge_space({"ties": "TIES-Merging"}, "both")
+    assert list(both) == ["ties", "ties-core"]
+
+
+def test_core_results_paths_match_what_eval_writes(tmp_path):
+    """The two sides spell the path independently (postprocessing/ never
+    imports src/), so pin them against each other."""
+    from argparse import Namespace
+
+    from src.eval import _save_target_eval_results
+    from src.merging.registry import get_merge_spec
+
+    args = Namespace(results_db=str(tmp_path), merge_space="core")
+    file_name = "masked_magmax_with_targetdata-core_lambda0.5_labels_target3_seed7.json"
+    _save_target_eval_results(
+        {"overall_accuracy": 0.5},
+        get_merge_spec("masked_magmax_with_targetdata"),
+        args,
+        "labels/",
+        file_name,
+    )
+
+    path = vision_result_path(str(tmp_path), 0.5)(
+        "masked_magmax_with_targetdata-core-labels", 3, 7
+    )
+    assert Path(path).exists()

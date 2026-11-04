@@ -29,7 +29,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.config import get_zeroshot_checkpoint
-from src.merging.registry import apply_merge, get_merge_spec
+from src.merging.core_space import CoreSpace
+from src.merging.registry import apply_merge, get_merge_spec, result_name
 from src.merging.task_vector import TaskVector
 from src.merging.task_vectors import mask_and_merge_by_weights
 from src.nlp.finetune_nlp import finetune_task_sequence
@@ -111,6 +112,19 @@ def _load_task_vectors(args, ckpt_dir, zeroshot_path, n_tasks):
     ]
 
 
+def _load_core_space(args, ckpt_dir, n_tasks):
+    """The Core Space bases for --merge_space core (from every task's adapter;
+    LoRA only, as src/args.py enforces), else None."""
+    if args.merge_space != "core":
+        return None
+    return CoreSpace.from_adapters(
+        [
+            torch.load(adapter_path(ckpt_dir, i), weights_only=False)
+            for i in range(n_tasks)
+        ]
+    )
+
+
 @torch.no_grad()
 def _apply_task_vector(merged_tv, zeroshot_path, scaling_coef, device):
     """zero-shot + scaling_coef * merged_tv, over the keys merged_tv has.
@@ -187,6 +201,7 @@ def merge_and_evaluate(args):
     ckpt_dir = _ckpt_dir(args)
     zeroshot_path = get_zeroshot_checkpoint(args.model)
     task_vectors = _load_task_vectors(args, ckpt_dir, zeroshot_path, len(tasks))
+    core_space = _load_core_space(args, ckpt_dir, len(tasks))
     tokenizer = _tokenizer(args)
 
     spec = get_merge_spec(args.merge_fn)
@@ -204,14 +219,16 @@ def merge_and_evaluate(args):
         nonlocal fixed_merged_model
         if fixed_merged_model is None:
             fixed_merged_model = _apply_task_vector(
-                apply_merge(spec, task_vectors),
+                apply_merge(spec, task_vectors, core_space=core_space),
                 zeroshot_path,
                 args.scaling_coef,
                 args.device,
             )
         return fixed_merged_model
 
-    out_dir = os.path.join(ckpt_dir, args.merge_fn)
+    # TODO(--merge_space core): --scaling_coef's default (0.5) was chosen for
+    # full-space merges and may need retuning for core merges; not done yet.
+    out_dir = os.path.join(ckpt_dir, result_name(args.merge_fn, args.merge_space))
     os.makedirs(out_dir, exist_ok=True)
 
     results_by_target = {}
@@ -233,11 +250,15 @@ def merge_and_evaluate(args):
             weights_each_task = build_target_weights(
                 len(tasks), task_idx_selected, env.ratio
             )  # weight is obviously just the ratio of each task in the target enironment which is given in task incremental learning
+            # Under --merge_space core the budgets — and num_unaligned /
+            # num_params_all — count core-matrix entries, not weights.
             merged_tv, num_unaligned, num_params_all = mask_and_merge_by_weights(
-                task_vectors,
+                task_vectors if core_space is None else core_space.to_core(task_vectors),
                 weights_each_task,
                 seed=derive_seed(args.seed, env.target_id),
             )
+            if core_space is not None:
+                merged_tv = core_space.from_core(merged_tv)
             merged_model = _apply_task_vector(
                 merged_tv, zeroshot_path, args.scaling_coef, args.device
             )
@@ -258,6 +279,7 @@ def merge_and_evaluate(args):
 
         result = {
             "target_id": env.target_id,
+            "merge_space": args.merge_space,
             "num_task_to_be_fetched": env.n_tasks_fetched,
             "ratio_task_to_be_fetched": env.ratio,
             "task_idx_selected": task_idx_selected,

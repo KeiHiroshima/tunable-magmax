@@ -31,6 +31,10 @@ if [ "${finetune_mode}" = "lora" ]; then
 else
     dir_name=${dir_name:-reproducing}
 fi
+# full: merge in the adapted weights' own coordinates. core: rotate the LoRA
+# task vectors into Core Space first (src/merging/core_space.py; lora only);
+# results go under <merge_fn>-core so they never mix with the full ones.
+merge_space=${merge_space:-full}  # full core
 
 
 if [ $n_splits -eq 5 ]; then
@@ -43,9 +47,12 @@ fi
 
 similarity_args=()
 method_tag=${merge_fn}
+if [ "${merge_space}" != "full" ]; then
+    method_tag=${method_tag}-${merge_space}
+fi
 if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
     similarity_args=(--similarity_metric ${similarity_metric})
-    method_tag=${merge_fn}-${similarity_metric}
+    method_tag=${method_tag}-${similarity_metric}
 fi
 
 echo "======================================================================================"
@@ -68,6 +75,7 @@ uv run python merge_for_targetdata.py \
     --results_db ${log_dir} \
     --taskseq_pattern ${task_seq} \
     --merge_fn ${merge_fn} \
+    --merge_space ${merge_space} \
     "${similarity_args[@]}" \
     --target_config ${target_config} \
     --num_train_data_each_task ${num_train_data_each_task} \

@@ -42,6 +42,7 @@ def _vision_args(**overrides):
         split_strategy="class",
         sequential_finetuning=True,
         merge_fn="magmax",
+        merge_space="full",
         wandb_entity_name="test-entity",
         device="cpu",
         load=None,

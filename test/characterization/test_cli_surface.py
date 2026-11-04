@@ -42,6 +42,7 @@ MERGE_ARGV = [
     "--results_db", "logs/ViT-B-16/run",
     "--taskseq_pattern", "A",
     "--merge_fn", "masked_magmax_with_targetdata",
+    "--merge_space", "full",
     "--similarity_metric", "labels",
     "--num_train_data_each_task", "500",
     "--num_target_data", "1000",
@@ -81,6 +82,7 @@ NLP_MERGE_ARGV = [
     "--seed", "3",
     "--gpu_id", "0",
     "--merge_fn", "masked_magmax_with_targetdata",
+    "--merge_space", "full",
     "--target_config", "target_data_config_lsb",
     "--num_target_data", "200",
     "--eval_full_testsets",
@@ -181,6 +183,36 @@ def test_vision_lora_takes_the_t5_lora_learning_rate():
 def test_lora_is_rejected_outside_stdcl_lsb_and_vision():
     with pytest.raises(SystemExit):
         _parse(["x", "--model", "t5-small", "--dataset", "CITB19", "--finetune_mode", "lora"])
+
+
+def test_merge_space_defaults_to_full():
+    assert _parse(MERGE_ARGV).merge_space == "full"
+    assert _parse(NLP_MERGE_ARGV).merge_space == "full"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        MERGE_ARGV + ["--finetune_mode", "lora"],
+        ["x", "--model", "t5-base", "--dataset", "LSB", "--taskseq_pattern", "4",
+         "--finetune_mode", "lora"],
+    ],
+)
+def test_core_merge_space_parses_for_lora_runs(argv):
+    assert _parse(argv + ["--merge_space", "core"]).merge_space == "core"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        MERGE_ARGV,  # vision, full fine-tuning
+        NLP_MERGE_ARGV,  # StdCL, full fine-tuning
+        ["x", "--model", "t5-small", "--dataset", "CITB19"],  # no LoRA at all
+    ],
+)
+def test_core_merge_space_is_rejected_without_lora(argv):
+    with pytest.raises(SystemExit):
+        _parse(argv + ["--merge_space", "core"])
 
 
 def test_nlp_merge_script_argv_parses():

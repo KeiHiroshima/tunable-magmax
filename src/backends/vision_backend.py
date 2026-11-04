@@ -27,7 +27,8 @@ from src.lora import (
     merge_adapter_into,
 )
 from src.merging.task_vector import TaskVector
-from src.merging.registry import get_merge_spec
+from src.merging.core_space import CoreSpace
+from src.merging.registry import get_merge_spec, result_name
 from src.modeling import ImageEncoder, unpack_visual_attention
 from src.paths import adapter_path, checkpoint_dir, finetuned_path
 from src.trainer import (
@@ -243,9 +244,19 @@ def merge_and_evaluate(args):
             for _idx in range(args.n_splits)
         ]
 
+    # --merge_space core (LoRA only; enforced by src/args.py): the bases come
+    # from the adapters, once per run — they do not depend on the target.
+    core_space = (
+        CoreSpace.from_adapters(adapters) if args.merge_space == "core" else None
+    )
+
     spec = get_merge_spec(args.merge_fn)
     # Every merge method was registered with the same single coefficient; the
     # loop is kept so a sweep can be reinstated by extending this list.
+    # TODO(--merge_space core): 0.5 was chosen for full-space merges. Core
+    # Space packs the same norm into far fewer entries, so a max/sign-based
+    # merge there can come out at a different scale; the coefficient may
+    # need retuning for core merges. Not done yet.
     coeffs = [0.5]
 
     for coeff in coeffs:
@@ -255,11 +266,11 @@ def merge_and_evaluate(args):
             project="magmax",
             group="merging-CIL-target",
             entity=args.wandb_entity_name,
-            name=f"{name}-{args.taskseq_pattern}-{args.merge_fn}_lambda{args.coeff}_seed{args.seed}",
+            name=f"{name}-{args.taskseq_pattern}-{result_name(args.merge_fn, args.merge_space)}_lambda{args.coeff}_seed{args.seed}",
             tags=["merging-target", "CIL", f"{args.dataset}", f"{method}"],
             config=args,
         )
 
         evaluate_merged_fts_on_target_data(
-            task_vectors, args, spec, coeff, pretrained_checkpoint
+            task_vectors, args, spec, coeff, pretrained_checkpoint, core_space=core_space
         )

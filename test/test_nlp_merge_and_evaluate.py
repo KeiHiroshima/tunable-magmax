@@ -108,6 +108,7 @@ def _write_target_config(tmp_path, monkeypatch, *, num_task_to_be_fetched, ratio
 def _args(tmp_path, merge_fn, target_config, seed=7, eval_full_testsets=False):
     return Namespace(
         merge_fn=merge_fn,
+        merge_space="full",
         device="cpu",
         seed=seed,
         model="t5-small",

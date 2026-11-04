@@ -35,7 +35,12 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for `import results`
 
-from results import COMPETITOR_ALL_DICT, load_overall_accuracy, load_target_data_config  # noqa: E402
+from results import (  # noqa: E402
+    COMPETITOR_ALL_DICT,
+    load_overall_accuracy,
+    load_target_data_config,
+    with_merge_space,
+)
 
 RUN_DIR = re.compile(r"ft-pattern_(?P<order>\w+)-epochs-(?P<epochs>\d+)-seed:(?P<seed>\d+)")
 # StdCL/LSB's proposed method has no "-<similarity_metric>" variants.
@@ -43,11 +48,21 @@ NLP_COMPETITORS = {k: v for k, v in COMPETITOR_ALL_DICT.items() if "-" not in k}
 ALL_TASKS = "All tasks"
 
 
+def _competitors(args) -> dict[str, str]:
+    return with_merge_space(NLP_COMPETITORS, args.merge_space)
+
+
 def _parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", default=str(REPO_ROOT / "logs" / "nlp"), help="the copied results tree")
     p.add_argument("--target_config", default="target_data_config_lsb", help="configs/<name>.json")
     p.add_argument("--include_all_tasks", action="store_true", help="also report the all-tasks environment")
+    p.add_argument(
+        "--merge_space",
+        default="full",
+        choices=["full", "core", "both"],
+        help="report the --merge_space core results (<merge_fn>-core) instead of, or beside, the full ones",
+    )
     p.add_argument("--digits", type=int, default=2, help="decimal places, accuracies in %%")
     p.add_argument("--out", help="save every cell as a long-form CSV (setting, order, method, column, mean, std, n_seeds)")
     return p.parse_args()
@@ -142,7 +157,7 @@ def main():
             for epochs in sorted({e for e, _ in epochs_seeds}):
                 seeds = sorted(s for e, s in epochs_seeds if e == epochs)
                 path_fn = logs_result_path(root, model, scope, order, epochs)
-                per_order.append(load_overall_accuracy(path_fn, NLP_COMPETITORS, target_ids, seeds))
+                per_order.append(load_overall_accuracy(path_fn, _competitors(args), target_ids, seeds))
             per_order = pd.concat(per_order).assign(order=order)
             pooled.append(per_order)
             _report(f"{model} {scope}  Order {order}", order, per_order, columns, args, model, scope, records)
@@ -159,7 +174,7 @@ def main():
 
 def _report(title, order, long_df, columns, args, model, scope, records):
     seeds = sorted(int(s) for s in long_df["seed"].unique())
-    mean, std, n = summarize(per_seed_accuracy(long_df, columns, NLP_COMPETITORS))
+    mean, std, n = summarize(per_seed_accuracy(long_df, columns, _competitors(args)))
     print(f"\n### {title}   [mean±std over seeds {seeds}, accuracy %, * = best]")
     print(format_table(mean, std, columns, args.digits).to_string())
     for method in mean.index:

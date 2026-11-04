@@ -66,6 +66,10 @@ def _resolve_training_defaults(parser, args):
             "--finetune_mode lora is only implemented for StdCL/LSB and "
             f"{'/'.join(_VISION_DATASETS)}"
         )
+    # Core Space bases come from the LoRA factors (src/merging/core_space.py),
+    # which only a LoRA run saves.
+    if args.merge_space == "core" and args.finetune_mode != "lora":
+        parser.error("--merge_space core requires --finetune_mode lora")
 
     if args.lr is None:
         if t5:
@@ -245,6 +249,19 @@ def parse_arguments(argv=None):
     )
     parser.add_argument(
         "--merge_fn", type=str, default="magmax", help="Merging function to use."
+    )
+    parser.add_argument(
+        "--merge_space",
+        type=str,
+        default="full",
+        choices=["full", "core"],
+        help=(
+            "Coordinates --merge_fn merges in. full: the adapted weights' own "
+            "elements. core: each LoRA task vector rotated into the Core Space "
+            "bases shared by all tasks (Panariello et al., NeurIPS 2025) and "
+            "rotated back after merging; --finetune_mode lora only. Results "
+            "go under <merge_fn>-core."
+        ),
     )
     parser.add_argument(
         "--datasets", type=str, default=None, help="Comma-separated list of datasets."
