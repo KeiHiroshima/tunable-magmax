@@ -3,15 +3,13 @@ from logging import getLogger
 
 import torch
 
-from src.args import parse_arguments
-from src.config import get_zeroshot_checkpoint
-
 warnings.simplefilter("ignore")
 
-
-# Config
-args = parse_arguments()
-pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+# NOTE: this module deliberately has no import-time configuration. It used to
+# call parse_arguments() here to build a module-level `pretrained_checkpoint`,
+# which was never read (every method takes the checkpoint as a parameter) but
+# did mean that importing TaskVector parsed sys.argv — so any non-CLI caller,
+# tests included, had to fake an argv first.
 logger = getLogger("root")
 
 
@@ -34,10 +32,14 @@ class TaskVector:
         else:
             with torch.no_grad():
                 assert pretrained_checkpoint
-                pretrained_state_dict = torch.load(pretrained_checkpoint).state_dict()
+                pretrained_state_dict = torch.load(
+                    pretrained_checkpoint, weights_only=False
+                ).state_dict()
 
                 if finetuned_checkpoint:
-                    finetuned_state_dict = torch.load(finetuned_checkpoint).state_dict()
+                    finetuned_state_dict = torch.load(
+                        finetuned_checkpoint, weights_only=False
+                    ).state_dict()
 
                 self.vector = {}
                 for key in pretrained_state_dict:
@@ -91,17 +93,24 @@ class TaskVector:
     def apply_to(self, pretrained_checkpoint, scaling_coef=1.0):
         """Apply a task vector to a pretrained model."""
         with torch.no_grad():
-            pretrained_model = torch.load(pretrained_checkpoint)
+            pretrained_model = torch.load(pretrained_checkpoint, weights_only=False)
             new_state_dict = {}
             pretrained_state_dict = pretrained_model.state_dict()
+            missing = []
             for key in pretrained_state_dict:
                 if key not in self.vector:
-                    print(
-                        f"Warning: key {key} is present in the pretrained state dict but not in the task vector"
-                    )
+                    missing.append(key)
                     continue
                 new_state_dict[key] = (
                     pretrained_state_dict[key] + scaling_coef * self.vector[key]
+                )
+            # One line rather than one per key: a LoRA task vector covers only
+            # the adapted weights, so every other key is missing by design.
+            if missing:
+                print(
+                    f"Warning: {len(missing)} of {len(pretrained_state_dict)} keys "
+                    f"in the pretrained state dict are not in the task vector "
+                    f"and keep their pretrained values (first: {missing[0]})"
                 )
         pretrained_model.load_state_dict(new_state_dict, strict=False)
         return pretrained_model

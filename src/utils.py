@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import zlib
 from logging import config, getLogger
 
 import numpy as np
@@ -37,6 +38,16 @@ def cosine_lr(optimizer, base_lrs, warmup_length, steps):
     return _lr_adjuster
 
 
+def constant_lr(optimizer, base_lr):
+    """The same step -> None adjuster interface as cosine_lr, holding base_lr."""
+
+    def _lr_adjuster(step):
+        for param_group in optimizer.param_groups:
+            assign_learning_rate(param_group, base_lr)
+
+    return _lr_adjuster
+
+
 def accuracy(output, target, topk=(1,)):
     pred = output.topk(max(topk), 1, True, True)[1].t()
     correct = pred.eq(target.view(1, -1).expand_as(pred))
@@ -53,10 +64,31 @@ def torch_save(model, save_path):
 
 
 def torch_load(save_path, device=None):
-    model = torch.load(save_path)
+    model = torch.load(save_path, weights_only=False)
     if device is not None:
         model = model.to(device)
     return model
+
+
+def has_evaluation_result(json_path, key="overall_accuracy") -> bool:
+    """Whether `json_path` holds a finished evaluation, i.e. has an accuracy
+    (`key`: the NLP backend's full-test-set results store `average_accuracy`).
+
+    Both backends skip a target environment whose results file is finished, so
+    an interrupted merge run resumes where it stopped. Existence alone is not
+    enough: vision's merge_max_abs_masked_with_targetdata writes
+    num_unaligned/num_params_all to this same file *before* the model is
+    evaluated, so a run that dies during evaluation leaves a file with no
+    accuracy in it, and treating that as done would skip the target forever.
+    An unreadable file (a write cut off mid-way) is likewise not done.
+    """
+    if not os.path.exists(json_path):
+        return False
+    try:
+        with open(json_path) as f:
+            return key in json.load(f)
+    except json.JSONDecodeError:
+        return False
 
 
 def get_logits(inputs, classifier):
@@ -105,6 +137,10 @@ transform = T.Compose(
 
 def setup_logging(config_path="logging_config.json", level=None):
     """
+    Every src.* module logs through getLogger(__name__), which propagates to
+    the root logger, so the root logger is where the console handler lives.
+    There is no file handler: the scripts under scripts/ tee stdout to a file.
+
     Args:
         config_path:
         level: ('DEBUG', 'INFO', 'WARNING', 'ERROR')
@@ -145,18 +181,28 @@ def do_eval(model, dl, device, flag_data_parallel=False):
         correct += pred.eq(y.view_as(pred)).sum().item()
         n += y.size(0)
 
-    metrics = {"top1": correct / n}
+    # `correct`/`n` come back alongside the ratio so a caller evaluating several
+    # datasets can micro-average them — sum the counts — instead of running the
+    # whole evaluation a second time to get the totals.
+    metrics = {"top1": float(correct / n), "correct": int(correct), "n": int(n)}
 
     # clean up GPU memory
     del x, y, logits, pred
     torch.cuda.empty_cache()
-
-    # convert to float
-    for key in metrics:
-        metrics[key] = float(metrics[key])
 
     return metrics
 
 
 def is_freezed_parameter(task_vectors):
     return all(torch.all(tv == 0) for tv in task_vectors)
+
+
+def derive_seed(*parts) -> int:
+    """A stable integer seed built from `parts`.
+
+    Uses crc32 rather than hash(): Python randomises string hashing per
+    process, so hash() would give a different seed on every run and defeat the
+    point. crc32 gives the same number on every run and machine.
+    """
+    payload = "|".join(str(part) for part in parts).encode()
+    return zlib.crc32(payload)

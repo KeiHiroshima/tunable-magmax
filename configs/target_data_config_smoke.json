@@ -1,0 +1,25 @@
+{
+  "dataset_configs": [
+    {
+      "num_task_to_be_fetched": 2,
+      "ratio_task_to_be_fetched": [0.5, 0.5],
+      "variants": [
+        {"target_id": 1, "random_seed": 42}
+      ]
+    },
+    {
+      "num_task_to_be_fetched": 2,
+      "ratio_task_to_be_fetched": [0.8, 0.2],
+      "variants": [
+        {"target_id": 2, "random_seed": 123}
+      ]
+    },
+    {
+      "num_task_to_be_fetched": -1,
+      "ratio_task_to_be_fetched": [-1],
+      "variants": [
+        {"target_id": 3, "random_seed": 456}
+      ]
+    }
+  ]
+}

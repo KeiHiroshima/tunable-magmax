@@ -1,21 +1,14 @@
-import random
 import sys
 from logging import getLogger
-from typing import Optional, Tuple, Union
 
 # from venv import logger
 import geomloss
-import optuna
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.utils.data import DataLoader, Subset
 
-from src.args import parse_arguments
-from src.config import get_zeroshot_checkpoint
-from src.heads import get_classification_head
 from src.merging.otdd import sinkhorn
-from src.merging.task_vector import TaskVector
-from src.modeling import ImageClassifier, ImageEncoder
+from src.modeling import ImageEncoder
 
 sys.path.append("../")
 from .. import utils
@@ -27,9 +20,8 @@ Compatible with OTDD interface from https://github.com/microsoft/otdd
 """
 
 
-# Config
-args = parse_arguments()
-pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+# NOTE: no import-time configuration here on purpose — see the same note in
+# src/merging/task_vectors.py.
 logger = getLogger(__name__)
 
 
@@ -41,10 +33,10 @@ class FeatureCost:
 
     def __init__(
         self,
-        src_embedding: Optional[nn.Module] = None,
-        tgt_embedding: Optional[nn.Module] = None,
-        src_dim: Optional[Tuple[int, ...]] = None,
-        tgt_dim: Optional[Tuple[int, ...]] = None,
+        src_embedding: nn.Module | None = None,
+        tgt_embedding: nn.Module | None = None,
+        src_dim: tuple[int, ...] | None = None,
+        tgt_dim: tuple[int, ...] | None = None,
         p: int = 2,
         device: str = "cpu",
     ):
@@ -105,10 +97,10 @@ class DatasetDistance:
         self,
         loader_src: Subset,
         loader_tgt: Subset,
-        feature_cost: Optional[FeatureCost] = None,
+        feature_cost: FeatureCost | None = None,
         method: str = "mmd",
         kernel_type: str = "rbf",
-        kernel_bandwidth: Optional[float] = None,
+        kernel_bandwidth: float | None = None,
         device: str = "cpu",
         **kwargs,
     ):
@@ -145,7 +137,7 @@ class DatasetDistance:
                 f"Kernel type must be 'rbf', 'linear', or 'poly', got {kernel_type}"
             )
 
-    def _extract_all_features(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _extract_all_features(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract features from both source and target datasets."""
         if self.feature_cost is not None:
             # Use provided feature extractor
@@ -180,7 +172,7 @@ class DatasetDistance:
         return src_features.to(self.device), tgt_features.to(self.device)
 
     def _compute_kernel_matrix(
-        self, X: torch.Tensor, Y: Optional[torch.Tensor] = None
+        self, X: torch.Tensor, Y: torch.Tensor | None = None
     ) -> torch.Tensor:
         """
         Compute kernel matrix K(X, Y).
@@ -303,7 +295,7 @@ class DatasetDistance:
 
     def _compute_otdd(
         self, X: torch.Tensor, Y: torch.Tensor
-    ) -> Tuple[float, torch.Tensor]:
+    ) -> tuple[float, torch.Tensor]:
         """
         Compute Optimal Transport Dataset Distance (OTDD).
         """
@@ -321,8 +313,8 @@ class DatasetDistance:
         return cost, P
 
     def distance(
-        self, maxsamples: Optional[int] = None, return_coupling: bool = False
-    ) -> Union[float, Tuple[float, torch.Tensor]]:
+        self, maxsamples: int | None = None, return_coupling: bool = False
+    ) -> float | tuple[float, torch.Tensor]:
         """
         Compute dataset distance.
 
@@ -375,11 +367,11 @@ class DatasetDistance:
 def compute_mmd_similarity(
     data_src: Subset,
     data_tgt: Subset,
-    feature_cost: Optional[FeatureCost] = None,
+    feature_cost: FeatureCost | None = None,
     kernel_type: str = "rbf",
-    kernel_bandwidth: Optional[float] = None,
+    kernel_bandwidth: float | None = None,
     device: str = "cpu",
-    maxsamples: Optional[int] = None,
+    maxsamples: int | None = None,
 ) -> float:
     """
     Compute MMD distance between two datasets.
@@ -427,9 +419,9 @@ def compute_mmd_similarity(
 def compute_cosine_similarity(
     data_src: Subset,
     data_tgt: Subset,
-    feature_cost: Optional[FeatureCost] = None,
+    feature_cost: FeatureCost | None = None,
     device: str = "cpu",
-    maxsamples: Optional[int] = None,
+    maxsamples: int | None = None,
 ) -> float:
     """
     Compute cosine distance between dataset centroids.
@@ -471,10 +463,10 @@ def compute_cosine_similarity(
 def compute_otdd_similarity(
     data_src: Subset,
     data_tgt: Subset,
-    feature_cost: Optional[ImageEncoder] = None,
+    feature_cost: ImageEncoder | None = None,
     reg: float = 0.1,
     device: str = "cpu",
-    maxsamples: Optional[int] = None,
+    maxsamples: int | None = None,
 ) -> float:
     """
     Compute OTDD between two datasets.
@@ -549,296 +541,3 @@ cost_routines = {
     2: (lambda x, y: geomloss.utils.squared_distances(x, y) / 2),
 }
 
-
-def eval_given_dataset(image_encoder, dataset, dataset_name, args):
-    classification_head = get_classification_head(args, dataset_name)
-    model = ImageClassifier(image_encoder, classification_head)
-
-    if args.model == "ViT-L-14":
-        flag_data_parallel = True
-        device = list(range(torch.cuda.device_count()))
-        print("Using devices", device)
-        model = torch.nn.DataParallel(model, device_ids=device)
-    else:
-        flag_data_parallel = False
-
-    acc_list = []
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=16,
-    )  # dataset.test_loader
-
-    # metrics = do_eval(model, dataloader, args.device)
-    acc_list.append(
-        utils.do_eval(
-            model,
-            dataloader,
-            args.device,
-            flag_data_parallel=flag_data_parallel,
-        )["top1"]
-    )
-
-    print(f"Target meta Accuracy: {acc_list[-1]:.4f}")
-
-    # cleanup on GPU
-    del model
-    torch.cuda.empty_cache()
-
-    return acc_list[-1]
-
-
-class EarlyStoppingCallback:
-    def __init__(self, patience: int, min_delta: float = 0.0):
-        self.patience = patience
-        self.min_delta = min_delta
-        self.counter = 0
-        self.best_value = None
-
-    def __call__(self, study: optuna.Study, trial: optuna.trial.FrozenTrial):
-        if self.best_value is None:
-            self.best_value = study.best_value
-            return
-
-        if study.direction == optuna.study.StudyDirection.MAXIMIZE:
-            if study.best_value > self.best_value + self.min_delta:
-                self.best_value = study.best_value
-                self.counter = 0
-            else:
-                self.counter += 1
-        else:  # MINIMIZE
-            if study.best_value < self.best_value - self.min_delta:
-                self.best_value = study.best_value
-                self.counter = 0
-            else:
-                self.counter += 1
-
-        if self.counter >= self.patience:
-            study.stop()
-
-
-def run_optmization(
-    task_vectors: list[TaskVector],
-    target_dataset_meta: Subset,
-    args,
-):
-    def objective(trial):
-        n_tv = len(task_vectors)
-        params = {
-            f"tv_{i}": trial.suggest_float(f"tv_{i}", 0.0, 1.0) for i in range(n_tv)
-        }
-        params = {k: v / sum(params.values()) for k, v in params.items()}
-        logger.debug(f"Current trial params: {params}")
-        # masked MAGMAX merging with calculated number of elements per task vector
-        with torch.no_grad():
-            new_vector = {}
-            for _, key in enumerate(task_vectors[0].vector):
-                num_elements = task_vectors[0].vector[key].numel()
-
-                elements_per_task_list = [
-                    int(num_elements * weight) for weight in params.values()
-                ]
-                remainder = num_elements - sum(elements_per_task_list)
-                for i in range(remainder):
-                    elements_per_task_list[i % len(elements_per_task_list)] += 1
-
-                # Stack all tensors for the current key
-                all_tensors = torch.stack(
-                    [
-                        tv.vector[key]
-                        if elements_per_task_list[i] > 0
-                        else torch.zeros_like(tv.vector[key])
-                        for i, tv in enumerate(task_vectors)
-                    ]
-                )
-                if all_tensors.dim() == 1:
-                    all_tensors = all_tensors[:, None]
-
-                logger.debug(f"{key} elements_per_task_list: {elements_per_task_list}")
-                logger.debug(f"Shape of all_tensors: {all_tensors.shape}")
-
-                # Get top absolute values and their corresponding task indices
-                _, task_indices = torch.topk(all_tensors.abs(), k=1, dim=0)
-
-                # Initial winners are the tasks with the highest absolute value
-                winner_indices = task_indices[0]
-
-                # Iterate downwards from the last task to the second task (task_id=1)
-                for i in range(len(task_vectors) - 1, -1, -1):
-                    # Mask for elements won by the current task
-                    is_winner = winner_indices == i
-                    num_won = is_winner.sum().item()
-                    elements_per_task = elements_per_task_list[i]
-
-                    if num_won > elements_per_task:
-                        logger.debug(
-                            f"Key: {key}, Task {i} won {num_won} elements > {elements_per_task}"
-                        )
-
-                        if i > 0:
-                            # Indices of elements won by this task
-                            won_indices = torch.where(is_winner.flatten())[0]
-
-                            # Randomly choose which ones to drop
-                            num_to_drop = num_won - elements_per_task
-                            perm = torch.randperm(won_indices.numel())
-                            drop_indices_local = perm[:num_to_drop]
-                            indices_to_drop = won_indices[drop_indices_local]
-
-                            # Find the best replacement from prior tasks
-                            prior_tensors = all_tensors[:i, ...].flatten(start_dim=1)
-
-                            prior_tensors_at_drop = prior_tensors[:, indices_to_drop]
-
-                            # Find new winners from prior tasks
-                            _, new_winners_local = torch.max(
-                                prior_tensors_at_drop.abs(), dim=0
-                            )
-
-                            # Update winner_indices for the dropped positions
-                            original_shape_indices = torch.unravel_index(
-                                indices_to_drop, all_tensors[0].shape
-                            )
-                            winner_indices[original_shape_indices] = new_winners_local
-                        elif i == 0:
-                            logger.debug(
-                                "reassign elements in the first task vector to not enough elements from other task vectors"
-                            )
-                            # Indices of elements won by this task
-                            won_indices = torch.where(is_winner.flatten())[0]
-
-                            # Randomly choose which ones to drop
-                            num_to_drop = num_won - elements_per_task
-                            perm = torch.randperm(won_indices.numel())
-                            drop_indices_local = perm[:num_to_drop]
-                            indices_to_drop = won_indices[drop_indices_local]
-
-                            # Find the replacement candidates from other tasks
-                            prior_tensors = all_tensors[1:, ...].flatten(start_dim=1)
-                            prior_tensors_at_drop = prior_tensors[:, indices_to_drop]
-
-                            # Find new winners from other tasks if other task vectors are not taken elements as much as elements_per_task[task_index]
-                            num_elements_needed = [
-                                elements_per_task_list[j]
-                                - (winner_indices == j).sum().item()
-                                for j in range(1, len(task_vectors))
-                            ]  # length: num_tasks-1
-
-                            new_winners_local = torch.zeros_like(indices_to_drop)
-                            pool_selected_indices = set()
-                            for j, num_needed in enumerate(num_elements_needed):
-                                if num_needed > 0:
-                                    logger.debug(
-                                        f"Task idx {j + 1} needs {num_needed} elements"
-                                    )
-                                    _, winner_indices_local = torch.max(
-                                        prior_tensors_at_drop.abs(), dim=0
-                                    )
-                                    candidates_indices = torch.where(
-                                        winner_indices_local == j
-                                    )[0]
-                                    """candidates_indices = torch.where(
-                                        prior_tensors_at_drop.argmax(dim=0) == j
-                                    )[0]"""
-
-                                    # check if candidates_indices is in pool_selected_indices
-                                    candidates_indices = torch.tensor(
-                                        [
-                                            idx
-                                            for idx in candidates_indices.tolist()
-                                            if idx not in pool_selected_indices
-                                        ]
-                                    )
-
-                                    if len(candidates_indices) <= num_needed:
-                                        logger.debug(
-                                            f"Task idx {j + 1} has only {len(candidates_indices)} candidates_indices <= num_needed {num_needed}"
-                                        )
-                                        indices_unselected = set(
-                                            list(range(len(indices_to_drop)))
-                                        ).difference(
-                                            pool_selected_indices,
-                                            set(candidates_indices.tolist()),
-                                        )
-                                        logger.debug(
-                                            f"indices_unselected: {len(indices_unselected)}, pool_selected_indices: {len(pool_selected_indices)}, candidates_indices: {len(candidates_indices)}"
-                                        )
-
-                                        selected_indices = random.sample(
-                                            list(indices_unselected),
-                                            k=(num_needed - len(candidates_indices)),
-                                        )
-                                        selected_indices += candidates_indices.tolist()
-
-                                        logger.debug(
-                                            f"selected_indices: {len(selected_indices)}"
-                                        )
-
-                                    else:
-                                        perm_ = torch.randperm(len(candidates_indices))
-                                        selected_indices = candidates_indices[
-                                            perm_[:num_needed]
-                                        ].tolist()
-
-                                    new_winners_local[selected_indices] = j + 1
-
-                                    pool_selected_indices.update(set(selected_indices))
-
-                                elif num_needed == 0:
-                                    logger.debug(
-                                        f"Task idx {j + 1} doesn't need elements any more"
-                                    )
-                                else:
-                                    raise ValueError(
-                                        "num_needed should be non-negative"
-                                    )
-
-                            """_, new_winners_local = torch.max(
-                                prior_tensors_at_drop.abs(), dim=0
-                            )"""
-                            # Update winner_indices for the dropped positions
-                            original_shape_indices = torch.unravel_index(
-                                indices_to_drop, all_tensors[0].shape
-                            )
-                            winner_indices[original_shape_indices] = new_winners_local
-                        else:
-                            raise ValueError("Unexpected task index")
-                    else:
-                        logger.debug(
-                            f"Key: {key}, Task {i} won {num_won} elements <= {elements_per_task}"
-                        )
-
-                # Gather the final values from the winning tensors
-                merged_tensor = all_tensors.gather(0, winner_indices[None, :]).squeeze(
-                    0
-                )
-
-                new_vector[key] = merged_tensor
-
-                winner_indices_distribution = [
-                    (winner_indices == i).sum().item() for i in range(len(task_vectors))
-                ]
-                logger.debug(
-                    f"{key} num elements per task:\n winner_indices_distribution: {winner_indices_distribution}, elements_per_task_list: {elements_per_task_list}"
-                )
-                assert winner_indices_distribution == elements_per_task_list, (
-                    f"winner_indices_distribution: {winner_indices_distribution}, elements_per_task_list: {elements_per_task_list}"
-                )
-
-        image_encoder = TaskVector(vector=new_vector).apply_to(
-            pretrained_checkpoint, scaling_coef=args.coeff
-        )
-        val_acc = eval_given_dataset(
-            image_encoder, target_dataset_meta, args.dataset, args
-        )
-
-        return val_acc
-
-    study = optuna.create_study(direction="maximize")
-    early_stopping = EarlyStoppingCallback(patience=10, min_delta=0.0)
-    n_trials = 1 if args.logger_mode == "DEBUG" else 500
-    study.optimize(objective, n_trials=n_trials, callbacks=[early_stopping])
-
-    best_parameters = list(study.best_params.values())
-    return best_parameters
