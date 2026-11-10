@@ -24,6 +24,7 @@ FINETUNE_ARGV = [
     "--n_splits", "5",
     "--split_strategy", "class",
     "--sequential-finetuning",
+    "--lora_chain", "merge",
     "--seed", "3",
     "--results_db", "logs/ViT-B-16/run",
     "--taskseq_pattern", "A",
@@ -39,6 +40,7 @@ MERGE_ARGV = [
     "--n_splits", "5",
     "--split_strategy", "class",
     "--sequential-finetuning",
+    "--lora_chain", "merge",
     "--results_db", "logs/ViT-B-16/run",
     "--taskseq_pattern", "A",
     "--merge_fn", "masked_magmax_with_targetdata",
@@ -57,6 +59,7 @@ NLP_FINETUNE_ARGV = [
     "--model", "t5-base",
     "--dataset", "StdCL",
     "--finetune_mode", "full",
+    "--lora_chain", "merge",
     "--epochs", "1",
     "--batch_size", "8",
     "--grad_accum_steps", "8",
@@ -76,6 +79,7 @@ NLP_MERGE_ARGV = [
     "--model", "t5-base",
     "--dataset", "StdCL",
     "--finetune_mode", "full",
+    "--lora_chain", "merge",
     "--epochs", "1",
     "--sequential-finetuning",
     "--taskseq_pattern", "1",
@@ -213,6 +217,47 @@ def test_core_merge_space_parses_for_lora_runs(argv):
 def test_core_merge_space_is_rejected_without_lora(argv):
     with pytest.raises(SystemExit):
         _parse(argv + ["--merge_space", "core"])
+
+
+# --- --lora_chain --------------------------------------------------------------
+
+# LSB under LoRA, sequential: the setting --lora_chain reuse is meant for.
+NLP_LORA_ARGV = [
+    "x", "--model", "t5-base", "--dataset", "LSB", "--taskseq_pattern", "4",
+    "--finetune_mode", "lora", "--sequential-finetuning",
+]
+
+
+def test_lora_chain_defaults_to_merge():
+    """Without the flag every run keeps today's chain (O-LoRA eq. 9)."""
+    no_flag = [a for a in FINETUNE_ARGV if a not in ("--lora_chain", "merge")]
+    assert _parse(no_flag).lora_chain == "merge"
+    assert _parse(NLP_LORA_ARGV).lora_chain == "merge"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [FINETUNE_ARGV + ["--finetune_mode", "lora"], NLP_LORA_ARGV],
+    ids=["vision", "nlp"],
+)
+def test_reuse_parses_for_sequential_lora_runs(argv):
+    assert _parse(argv + ["--lora_chain", "reuse"]).lora_chain == "reuse"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        FINETUNE_ARGV,  # vision, full fine-tuning
+        NLP_FINETUNE_ARGV,  # StdCL, full fine-tuning
+        [a for a in FINETUNE_ARGV if a != "--sequential-finetuning"]
+        + ["--finetune_mode", "lora"],  # vision LoRA, independent
+        [a for a in NLP_LORA_ARGV if a != "--sequential-finetuning"],  # NLP LoRA, independent
+    ],
+    ids=["vision-full", "nlp-full", "vision-independent", "nlp-independent"],
+)
+def test_reuse_is_rejected_without_sequential_lora(argv):
+    with pytest.raises(SystemExit):
+        _parse(argv + ["--lora_chain", "reuse"])
 
 
 def test_nlp_merge_script_argv_parses():

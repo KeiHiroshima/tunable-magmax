@@ -70,6 +70,14 @@ def _resolve_training_defaults(parser, args):
     # which only a LoRA run saves.
     if args.merge_space == "core" and args.finetune_mode != "lora":
         parser.error("--merge_space core requires --finetune_mode lora")
+    # reuse continues one adapter from task to task; without LoRA there is no
+    # adapter, and without sequential fine-tuning every task starts from W_0
+    # with a fresh adapter under either chain.
+    if args.lora_chain == "reuse":
+        if args.finetune_mode != "lora":
+            parser.error("--lora_chain reuse requires --finetune_mode lora")
+        if not args.sequential_finetuning:
+            parser.error("--lora_chain reuse requires --sequential-finetuning")
 
     if args.lr is None:
         if t5:
@@ -164,6 +172,22 @@ def parse_arguments(argv=None):
             "(q/v of every attention block; for CLIP, the image tower's), "
             "merged into the weights before the next one; only adapters are "
             "saved."
+        ),
+    )
+    parser.add_argument(
+        "--lora_chain",
+        type=str,
+        default="merge",
+        choices=["merge", "reuse"],
+        help=(
+            "How --finetune_mode lora chains sequential tasks (src/lora.py). "
+            "merge: merge every earlier adapter into the weights and train a "
+            "fresh one per task (O-LoRA eq. 9). reuse: train one adapter "
+            "across every task, each continuing from the previous task's, on "
+            "the unmerged base; every task vector is then a single rank-r "
+            "adapter. reuse requires --finetune_mode lora and "
+            "--sequential-finetuning, and writes to its own -lora-reuse "
+            "directories."
         ),
     )
     parser.add_argument(

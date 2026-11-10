@@ -31,6 +31,16 @@ if [ "${model}" = "t5-large" ]; then
 else
     finetune_mode=${finetune_mode:-full}
 fi
+# lora only. merge: an adapter per task, merged into the weights before the
+# next (O-LoRA eq. 9). reuse: one adapter trained across every task
+# (src/lora.py); its checkpoints and logs go under {dataset}-lora-reuse
+# instead of {dataset}-lora so the two never mix.
+lora_chain=${lora_chain:-merge}  # merge reuse
+if [ "${finetune_mode}" = "lora" ] && [ "${lora_chain}" = "reuse" ]; then
+    mode_tag=lora-reuse
+else
+    mode_tag=${finetune_mode}
+fi
 # full: merge in the adapted weights' own coordinates. core: rotate the LoRA
 # task vectors into Core Space first (src/merging/core_space.py; lora only);
 # results go under <merge_fn>-core so they never mix with the full ones.
@@ -46,10 +56,10 @@ if [ "${merge_space}" != "full" ]; then
 fi
 
 echo "======================================================================================"
-echo "Merging ${model} (${finetune_mode}) for target data on ${dataset} (order: ${task_seq}, merge_fn: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
+echo "Merging ${model} (${mode_tag}) for target data on ${dataset} (order: ${task_seq}, merge_fn: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
 echo "======================================================================================"
 
-out_dir=outs/${model}/nlp_classification/${dataset}-${finetune_mode}/taskseq_${task_seq}
+out_dir=outs/${model}/nlp_classification/${dataset}-${mode_tag}/taskseq_${task_seq}
 mkdir -p ${out_dir}
 
 # tee -a: a re-run resumes (finished target environments are skipped), so
@@ -58,6 +68,7 @@ uv run python merge_for_targetdata.py \
     --model ${model} \
     --dataset ${dataset} \
     --finetune_mode ${finetune_mode} \
+    --lora_chain ${lora_chain} \
     --epochs ${epochs} \
     --sequential-finetuning \
     --taskseq_pattern ${task_seq} \

@@ -8,7 +8,9 @@ from them, so the claims that matter are the reconstruction identities:
     computed (O-LoRA eq. 9);
   * the task vector built from adapters 0..t is exactly W_t - W_0, i.e.
     applying it to the zero-shot model gives the model that task t+1 started
-    from.
+    from;
+  * under --lora_chain reuse, every task starts on the unmerged W_0 with the
+    previous task's A and B, and task t's vector is adapter t's delta alone.
 
 Everything runs on a tiny randomly initialised T5, offline.
 """
@@ -26,8 +28,10 @@ from src.lora import (
     LoRALinear,
     adapter_deltas,
     adapters_to_vector,
+    adapter_task_vectors,
     extract_adapter,
     inject_lora,
+    load_adapter_into,
     merge_adapter_into,
 )
 from src.paths import adapter_path, finetuned_path
@@ -242,3 +246,191 @@ def test_full_merge_space_builds_no_core_space(lora_run):
     _, ckpt_dir, _ = lora_run(n_tasks=2)
     args = Namespace(finetune_mode="lora", merge_space="full")
     assert backend._load_core_space(args, ckpt_dir, n_tasks=2) is None
+
+
+# --- --lora_chain reuse --------------------------------------------------------
+
+
+def _lora_modules(model):
+    return {n: m for n, m in model.named_modules() if isinstance(m, LoRALinear)}
+
+
+@pytest.fixture
+def reuse_run(tmp_path, monkeypatch):
+    """Runs finetune_task_sequence under --lora_chain reuse with a stand-in
+    for training that perturbs the adapter, recording for every task the
+    state it started from: output, frozen base weights, and A/B."""
+    zeroshot = tmp_path / "zeroshot.pt"
+    ckpt_dir = tmp_path / "run"
+    monkeypatch.setattr(finetune_nlp, "get_zeroshot_checkpoint", lambda name: str(zeroshot))
+    starts = []
+
+    def train_task(model, task, args):
+        modules = _lora_modules(model)
+        starts.append(dict(
+            logits=_logits(model),
+            base={n: m.base.weight.detach().clone() for n, m in modules.items()},
+            A={n: m.lora_A.detach().clone() for n, m in modules.items()},
+            B={n: m.lora_B.detach().clone() for n, m in modules.items()},
+        ))
+        _perturb_lora(model, seed=len(starts))
+
+    def run(n_tasks=3):
+        args = Namespace(
+            model="tiny", device="cpu", sequential_finetuning=True, lora_chain="reuse"
+        )
+        tasks = [Namespace(name=f"t{i}", num_labels=2) for i in range(n_tasks)]
+        finetune_nlp.finetune_task_sequence(
+            args, tasks, str(ckpt_dir),
+            build_base_model=lambda name: _tiny_t5(),
+            train_task=train_task,
+            lora=LoraConfig(),
+        )
+        return str(zeroshot), str(ckpt_dir), starts
+
+    return run
+
+
+def _reuse_args():
+    return Namespace(finetune_mode="lora", sequential_finetuning=True, lora_chain="reuse")
+
+
+def _saved(ckpt_dir, i):
+    return torch.load(adapter_path(ckpt_dir, i), weights_only=False)
+
+
+def test_reuse_never_merges_an_adapter_into_the_base(reuse_run):
+    zeroshot, _, starts = reuse_run(n_tasks=3)
+    w0 = torch.load(zeroshot, weights_only=False).state_dict()
+
+    for start in starts:
+        for name, weight in start["base"].items():
+            assert torch.equal(weight, w0[f"{name}.weight"])
+
+
+def test_reuse_task_starts_from_the_previous_tasks_adapter(reuse_run):
+    _, ckpt_dir, starts = reuse_run(n_tasks=3)
+
+    assert all(torch.count_nonzero(b) == 0 for b in starts[0]["B"].values())  # fresh
+    for t in (1, 2):
+        prev = _saved(ckpt_dir, t - 1)["modules"]
+        for name in starts[t]["A"]:
+            assert torch.equal(starts[t]["A"][name], prev[name]["A"])
+            assert torch.equal(starts[t]["B"][name], prev[name]["B"])
+
+
+def test_reuse_task_starts_from_the_previous_tasks_model(reuse_run):
+    """I3 under reuse: task t starts from what task t-1's vector rebuilds."""
+    zeroshot, ckpt_dir, starts = reuse_run(n_tasks=3)
+    task_vectors = backend._load_task_vectors(_reuse_args(), ckpt_dir, zeroshot, n_tasks=3)
+
+    for t in (1, 2):
+        rebuilt = backend._apply_task_vector(task_vectors[t - 1], zeroshot, 1.0, "cpu")
+        assert torch.allclose(_logits(rebuilt), starts[t]["logits"], atol=1e-5)
+    assert torch.allclose(starts[0]["logits"], _logits(_tiny_t5()), atol=1e-6)  # I4
+
+
+def test_reuse_task_vector_is_one_adapters_delta(reuse_run):
+    zeroshot, ckpt_dir, _ = reuse_run(n_tasks=3)
+    task_vectors = backend._load_task_vectors(_reuse_args(), ckpt_dir, zeroshot, n_tasks=3)
+    r = LoraConfig().r
+
+    for t, tv in enumerate(task_vectors):
+        expected = adapter_deltas(_saved(ckpt_dir, t))
+        assert tv.vector.keys() == expected.keys()
+        for key, tau in tv.vector.items():
+            assert torch.equal(tau, expected[key])
+            assert torch.linalg.matrix_rank(tau) <= r
+
+
+def test_resumed_reuse_run_continues_from_the_last_adapter(reuse_run):
+    """I2/I3: a rerun trains only the missing task, from the last saved adapter."""
+    _, ckpt_dir, starts = reuse_run(n_tasks=2)
+    starts.clear()
+
+    reuse_run(n_tasks=3)
+
+    assert len(starts) == 1  # only task 2 trained
+    prev = _saved(ckpt_dir, 1)["modules"]
+    for name in starts[0]["A"]:
+        assert torch.equal(starts[0]["A"][name], prev[name]["A"])
+        assert torch.equal(starts[0]["B"][name], prev[name]["B"])
+
+
+def test_reuse_and_merge_runs_do_not_share_a_checkpoint_directory():
+    args = dict(
+        model="t5-base", dataset="LSB", taskseq_pattern="4", epochs=1, seed=3,
+        sequential_finetuning=True, finetune_mode="lora",
+    )
+    merge = backend._ckpt_dir(Namespace(**args, lora_chain="merge"))
+    reuse = backend._ckpt_dir(Namespace(**args, lora_chain="reuse"))
+    unset = backend._ckpt_dir(Namespace(**args))
+
+    assert merge.endswith("nlp_classification/LSB-lora/ft-pattern_4-epochs-1-seed:3")
+    assert reuse.endswith("nlp_classification/LSB-lora-reuse/ft-pattern_4-epochs-1-seed:3")
+    assert unset == merge
+
+
+# --- load_adapter_into / adapter_task_vectors ----------------------------------
+
+
+def _adapter_from(config=LoraConfig(), seed=1):
+    model = _tiny_t5()
+    inject_lora(model, config)
+    _perturb_lora(model, seed=seed)
+    return extract_adapter(model, config)
+
+
+def test_load_adapter_into_copies_a_and_b():
+    adapter = _adapter_from()
+    model = _tiny_t5()
+    inject_lora(model, LoraConfig())
+
+    load_adapter_into(model, adapter, LoraConfig())
+
+    for name, m in _lora_modules(model).items():
+        assert torch.equal(m.lora_A, adapter["modules"][name]["A"])
+        assert torch.equal(m.lora_B, adapter["modules"][name]["B"])
+
+
+def _missing_module(adapter):
+    adapter["modules"].pop(next(iter(adapter["modules"])))
+
+
+def _wrong_shape(adapter):
+    ab = next(iter(adapter["modules"].values()))
+    ab["A"] = ab["A"][:-1]
+
+
+def _other_alpha(adapter):
+    adapter["config"]["alpha"] = 16  # same r, so every shape still matches
+
+
+@pytest.mark.parametrize(
+    "corrupt", [_other_alpha, _missing_module, _wrong_shape],
+    ids=["alpha", "missing-module", "shape"],
+)
+def test_load_adapter_into_rejects_a_mismatched_adapter(corrupt):
+    adapter = _adapter_from()
+    corrupt(adapter)
+    model = _tiny_t5()
+    inject_lora(model, LoraConfig())
+    before = {n: m.lora_A.detach().clone() for n, m in _lora_modules(model).items()}
+
+    with pytest.raises(ValueError):
+        load_adapter_into(model, adapter, LoraConfig())
+    # nothing was copied before the check failed
+    for name, m in _lora_modules(model).items():
+        assert torch.equal(m.lora_A, before[name])
+
+
+def test_reuse_task_vectors_are_each_adapter_alone():
+    adapters = [_adapter_from(seed=s) for s in (1, 2, 3)]
+
+    reuse = adapter_task_vectors(adapters, sequential=True, chain="reuse")
+    merge = adapter_task_vectors(adapters, sequential=True)  # default chain
+
+    for t, adapter in enumerate(adapters):
+        key = next(iter(reuse[t]))
+        assert torch.equal(reuse[t][key], adapter_deltas(adapter)[key])
+        assert torch.allclose(merge[t][key], adapters_to_vector(adapters[: t + 1])[key])

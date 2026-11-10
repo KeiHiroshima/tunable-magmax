@@ -81,6 +81,12 @@ def _parse_args():
     # nlp
     p.add_argument("--model", default="t5-base")
     p.add_argument("--finetune_mode", default="full", choices=["full", "lora"])
+    p.add_argument(
+        "--lora_chain",
+        default="merge",
+        choices=["merge", "reuse"],
+        help="nlp, --finetune_mode lora: must match the --lora_chain the run was trained with",
+    )
     p.add_argument("--dataset", default="StdCL", choices=["StdCL", "LSB"])
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--taskseq_pattern", default="1", help="nlp: O-LoRA order, 1-3 for StdCL, 4-6 for LSB")
@@ -117,6 +123,7 @@ def _build_path_fn(args):
         taskseq_pattern=args.taskseq_pattern,
         sequential_finetuning=args.sequential_finetuning,
         finetune_mode=args.finetune_mode,
+        lora_chain=args.lora_chain,
     )
 
 

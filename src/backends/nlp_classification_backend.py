@@ -9,7 +9,9 @@ Two fine-tuning modes (--finetune_mode):
           whole checkpoint is saved per task, as vision does.
     lora  a LoRA adapter per task, merged into the weights before the next
           task starts (t5-large); only adapters are saved, and each task's
-          model — hence its task vector — is rebuilt from them here.
+          model — hence its task vector — is rebuilt from them here. With
+          --lora_chain reuse one adapter is trained across every task
+          instead (src/lora.py).
 
 Mirrors vision_backend.py's two-stage structure (finetune saves per-task
 checkpoints; merge_and_evaluate reloads them). merge_and_evaluate also mirrors
@@ -35,11 +37,16 @@ from src.merging.task_vector import TaskVector
 from src.merging.task_vectors import mask_and_merge_by_weights
 from src.nlp.finetune_nlp import finetune_task_sequence
 from src.nlp.long_sequence_benchmark import EVAL_BATCH_SIZE, build_task_sequence
-from src.lora import LoraConfig, adapter_task_vectors
+from src.lora import LoraConfig, adapter_task_vectors, lora_chain
 from src.nlp.modeling_nlp import build_t5, freeze_shared_embeddings
 from src.nlp.target_data import build_target_weights, sample_target_eval_subset
 from src.nlp.trainer_nlp import generation_correct_and_total, train_seq2seq_task
-from src.paths import adapter_path, checkpoint_dir, finetuned_path
+from src.paths import (
+    adapter_path,
+    checkpoint_dir,
+    finetune_mode_suffix,
+    finetuned_path,
+)
 from src.target_env import load_target_envs, select_target_tasks
 from src.utils import derive_seed, has_evaluation_result, torch_load
 
@@ -50,12 +57,11 @@ def _ckpt_dir(args):
     # A LoRA run and a full run of the same model/order/seed must not share a
     # directory: they write different files, and a merge would read whichever
     # kind it expects.
-    scope = (
-        args.dataset
-        if args.finetune_mode == "full"
-        else f"{args.dataset}-{args.finetune_mode}"
+    return checkpoint_dir(
+        args,
+        group="nlp_classification",
+        scope=f"{args.dataset}{finetune_mode_suffix(args)}",
     )
-    return checkpoint_dir(args, group="nlp_classification", scope=scope)
 
 
 def _build_tasks(args):
@@ -95,7 +101,8 @@ def finetune(args):
 def _load_task_vectors(args, ckpt_dir, zeroshot_path, n_tasks):
     """One TaskVector per task: the model after task i minus the zero-shot
     model. Under LoRA that is the running sum of adapters 0..i (or adapter i
-    alone without --sequential-finetuning), over the adapted weights only."""
+    alone without --sequential-finetuning or with --lora_chain reuse), over
+    the adapted weights only."""
     if args.finetune_mode == "full":
         return [
             TaskVector(zeroshot_path, finetuned_path(ckpt_dir, i))
@@ -108,7 +115,9 @@ def _load_task_vectors(args, ckpt_dir, zeroshot_path, n_tasks):
     ]
     return [
         TaskVector(vector=v)
-        for v in adapter_task_vectors(adapters, args.sequential_finetuning)
+        for v in adapter_task_vectors(
+            adapters, args.sequential_finetuning, lora_chain(args)
+        )
     ]
 
 

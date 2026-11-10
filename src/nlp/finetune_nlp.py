@@ -22,7 +22,9 @@ With `lora` set (--finetune_mode lora) the same invariants hold, over adapter
 files instead of full checkpoints: task `idx` writes adapter_path(ckpt_dir,
 idx), and "continue from the preceding task" means starting from the
 zero-shot checkpoint with adapters 0..idx-1 merged in, in order (O-LoRA eq.
-9), before a fresh adapter is injected for task `idx`.
+9), before a fresh adapter is injected for task `idx`. Under --lora_chain
+reuse it instead means the unmerged zero-shot checkpoint with adapter idx-1's
+A and B loaded into the injected adapter, which then keeps training.
 """
 
 import os
@@ -33,7 +35,14 @@ from typing import Any
 import torch
 
 from src.config import get_zeroshot_checkpoint
-from src.lora import LoraConfig, extract_adapter, inject_lora, merge_adapter_into
+from src.lora import (
+    LoraConfig,
+    extract_adapter,
+    inject_lora,
+    load_adapter_into,
+    lora_chain,
+    merge_adapter_into,
+)
 from src.paths import adapter_path, finetuned_path
 from src.task_spec import TaskSpec
 from src.utils import torch_load, torch_save
@@ -87,6 +96,7 @@ def finetune_task_sequence(
     prev_ckpt: str | None = None
     # --finetune_mode lora: every adapter so far, in task order.
     adapters_so_far: list[str] = []
+    reuse = lora is not None and lora_chain(args) == "reuse"
 
     for idx, task in enumerate(tasks):  # I5
         logger.info(f"\n##### TASK {idx}: {task.name} #####")
@@ -110,7 +120,8 @@ def finetune_task_sequence(
         # the pretrained base (independent per-task finetuning).
         if lora:
             model = torch_load(zeroshot_path, device=args.device)
-            if args.sequential_finetuning:
+            # reuse: the base stays W_0; the previous adapter is loaded below.
+            if args.sequential_finetuning and not reuse:
                 for path in adapters_so_far:
                     merge_adapter_into(model, torch.load(path, weights_only=False))
         else:
@@ -122,6 +133,11 @@ def finetune_task_sequence(
             prepare_model(model, task)
         if lora:
             inject_lora(model, lora)
+            if reuse and adapters_so_far:
+                # I3: continue from the immediately preceding task's adapter.
+                load_adapter_into(
+                    model, torch.load(adapters_so_far[-1], weights_only=False), lora
+                )
         train_task(model, task, args)
 
         if lora:

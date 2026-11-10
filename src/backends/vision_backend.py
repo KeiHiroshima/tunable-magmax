@@ -24,13 +24,20 @@ from src.lora import (
     adapter_task_vectors,
     extract_adapter,
     inject_lora,
+    load_adapter_into,
+    lora_chain,
     merge_adapter_into,
 )
 from src.merging.task_vector import TaskVector
 from src.merging.core_space import CoreSpace
 from src.merging.registry import get_merge_spec, result_name
 from src.modeling import ImageEncoder, unpack_visual_attention
-from src.paths import adapter_path, checkpoint_dir, finetuned_path
+from src.paths import (
+    adapter_path,
+    checkpoint_dir,
+    finetune_mode_suffix,
+    finetuned_path,
+)
 from src.trainer import (
     build_loss_fn,
     build_optimizer_and_scheduler,
@@ -51,12 +58,12 @@ def _ckpt_dir(args):
     """Where this vision run's per-split checkpoints live. The fine-tuning and
     merging halves both go through here, so they cannot drift apart. A LoRA
     run writes adapters rather than whole checkpoints, so it gets its own
-    directory instead of sharing the full run's."""
-    scope = f"{args.dataset}-{args.n_splits}"
+    directory instead of sharing the full run's, and a --lora_chain reuse run
+    gets yet another (src/paths.py::finetune_mode_suffix)."""
     return checkpoint_dir(
         args,
         group=f"{args.split_strategy}_incremental",
-        scope=f"{scope}-lora" if _lora(args) else scope,
+        scope=f"{args.dataset}-{args.n_splits}{finetune_mode_suffix(args)}",
     )
 
 
@@ -72,6 +79,41 @@ def _ensure_unpacked_zeroshot_checkpoint(args) -> str:
         encoder = torch.load(zeroshot_path, weights_only=False)
         torch_save(unpack_visual_attention(encoder), unpacked_path)
     return unpacked_path
+
+
+def _lora_start_encoder(args, lora_base_path, adapters_so_far):
+    """The image encoder a LoRA split starts from, before its adapter is
+    injected: the unpacked zero-shot model, with every earlier adapter merged
+    in, in order, under sequential --lora_chain merge (the chain
+    src/nlp/finetune_nlp.py follows, O-LoRA eq. 9). Under --lora_chain reuse
+    the base stays the zero-shot model; _resume_adapter supplies the previous
+    split's adapter instead."""
+    image_encoder = torch.load(lora_base_path, weights_only=False)
+    if args.sequential_finetuning and lora_chain(args) == "merge":
+        for path in adapters_so_far:
+            merge_adapter_into(image_encoder, torch.load(path, weights_only=False))
+    return image_encoder
+
+
+def _resume_adapter(image_encoder, adapters_so_far, lora_config, args):
+    """--lora_chain reuse: load the immediately preceding split's adapter into
+    the freshly injected one, so training continues from it. Nothing to do on
+    the first split or under --lora_chain merge."""
+    if lora_chain(args) == "reuse" and adapters_so_far:
+        load_adapter_into(
+            image_encoder,
+            torch.load(adapters_so_far[-1], weights_only=False),
+            lora_config,
+        )
+
+
+def _wandb_reuse_label(args):
+    """(name suffix, tags) that mark a --lora_chain reuse run in wandb, so its
+    runs never pass for a merge-chain run's. Empty for every other run, whose
+    names stay as they were."""
+    if _lora(args) and lora_chain(args) == "reuse":
+        return "-lora-reuse", ["lora-reuse"]
+    return "", []
 
 
 def _log_trainable_parameters(image_encoder):
@@ -118,14 +160,7 @@ def _run_sequential_finetuning(args):
 
         assert train_dataset is not None, "Please provide a training dataset."
         if lora_config is not None:
-            # Same chain as src/nlp/finetune_nlp.py: the zero-shot model with
-            # every earlier adapter merged in, in order (O-LoRA eq. 9).
-            image_encoder = torch.load(lora_base_path, weights_only=False)
-            if args.sequential_finetuning:
-                for path in adapters_so_far:
-                    merge_adapter_into(
-                        image_encoder, torch.load(path, weights_only=False)
-                    )
+            image_encoder = _lora_start_encoder(args, lora_base_path, adapters_so_far)
         elif args.load is not None and args.load.endswith("pt"):
             image_encoder = ImageEncoder.load(args.load, keep_lang=True)
         elif args.sequential_finetuning and split_idx != 0:
@@ -156,6 +191,7 @@ def _run_sequential_finetuning(args):
             # After the head is built: inject_lora freezes everything but the
             # adapters, and only matches the (unpacked) image tower's q/v.
             inject_lora(image_encoder, lora_config)
+            _resume_adapter(image_encoder, adapters_so_far, lora_config, args)
             _log_trainable_parameters(image_encoder)
 
         model = setup_model_for_training(
@@ -198,13 +234,14 @@ def finetune(args):
     # The learning rate matched the CLI default anyway, but the batch size did
     # not: it silently replaced the documented default of 128 — the value the
     # paper reports fine-tuning with — and made --batch_size do nothing.
+    reuse_suffix, reuse_tags = _wandb_reuse_label(args)
     wandb.init(
         project="magmax",
         group=f"{args.dataset}-{args.n_splits}"
         if args.split_strategy == "class"
         else f"{args.dataset}-dil",
         entity=args.wandb_entity_name,
-        name=f"{args.dataset}-{args.n_splits}-pattern:{args.taskseq_pattern}-seed:{args.seed}",
+        name=f"{args.dataset}-{args.n_splits}-pattern:{args.taskseq_pattern}-seed:{args.seed}{reuse_suffix}",
         config=args,
         reinit="create_new",
         tags=[
@@ -213,6 +250,7 @@ def finetune(args):
             f"{args.dataset}",
             f"{args.split_strategy}",
             f"{args.n_splits}",
+            *reuse_tags,
         ],
     )
 
@@ -235,7 +273,9 @@ def merge_and_evaluate(args):
         ]
         task_vectors = [
             TaskVector(vector=v)
-            for v in adapter_task_vectors(adapters, args.sequential_finetuning)
+            for v in adapter_task_vectors(
+                adapters, args.sequential_finetuning, lora_chain(args)
+            )
         ]
     else:
         pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
@@ -259,6 +299,7 @@ def merge_and_evaluate(args):
     # need retuning for core merges. Not done yet.
     coeffs = [0.5]
 
+    reuse_suffix, reuse_tags = _wandb_reuse_label(args)
     for coeff in coeffs:
         args.coeff = coeff
 
@@ -266,8 +307,8 @@ def merge_and_evaluate(args):
             project="magmax",
             group="merging-CIL-target",
             entity=args.wandb_entity_name,
-            name=f"{name}-{args.taskseq_pattern}-{result_name(args.merge_fn, args.merge_space)}_lambda{args.coeff}_seed{args.seed}",
-            tags=["merging-target", "CIL", f"{args.dataset}", f"{method}"],
+            name=f"{name}-{args.taskseq_pattern}-{result_name(args.merge_fn, args.merge_space)}_lambda{args.coeff}_seed{args.seed}{reuse_suffix}",
+            tags=["merging-target", "CIL", f"{args.dataset}", f"{method}", *reuse_tags],
             config=args,
         )
 

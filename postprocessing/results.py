@@ -203,6 +203,7 @@ def nlp_result_path(
     sequential_finetuning: bool = True,
     base_dir: str | None = None,
     finetune_mode: str = "full",
+    lora_chain: str = "merge",
 ) -> ResultPath:
     """A ResultPath for the NLP layout:
     `{ckpt_dir}/{merge_fn}/target{id}_seed{s}.json`
@@ -218,13 +219,19 @@ def nlp_result_path(
     the analysis notebooks stay free of this project's ML dependencies (see
     test/characterization/test_merge_registry.py::
     test_postprocessing_labels_stay_in_sync_with_the_registry). If that
-    template changes, this needs updating too — including the `-lora` suffix
+    template changes, this needs updating too — including the `-lora` /
+    `-lora-reuse` suffix (src/paths.py::finetune_mode_suffix) that
     src/backends/nlp_classification_backend.py::_ckpt_dir puts on the dataset
-    directory of a --finetune_mode lora run.
+    directory of a --finetune_mode lora run, by --lora_chain.
     """
     base_dir = base_dir or os.environ.get("MAGMAX_BASE_DIR", "YOUR_BASE_DIR_FOR_CHECKPOINTS")
     sequential = "sequential_finetuning" if sequential_finetuning else ""
-    scope = dataset if finetune_mode == "full" else f"{dataset}-{finetune_mode}"
+    if finetune_mode == "full":
+        scope = dataset
+    elif lora_chain == "reuse":
+        scope = f"{dataset}-{finetune_mode}-reuse"
+    else:
+        scope = f"{dataset}-{finetune_mode}"
 
     def _path(key: str, target_id: int, seed: int) -> str:
         run_dir = f"ft-pattern_{taskseq_pattern}-epochs-{epochs}-seed:{seed}"

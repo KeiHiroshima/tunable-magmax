@@ -36,13 +36,23 @@ if [ "${model}" = "t5-large" ]; then
 else
     finetune_mode=${finetune_mode:-full}
 fi
+# lora only. merge: an adapter per task, merged into the weights before the
+# next (O-LoRA eq. 9). reuse: one adapter trained across every task
+# (src/lora.py); its checkpoints and logs go under {dataset}-lora-reuse
+# instead of {dataset}-lora so the two never mix.
+lora_chain=${lora_chain:-merge}  # merge reuse
+if [ "${finetune_mode}" = "lora" ] && [ "${lora_chain}" = "reuse" ]; then
+    mode_tag=lora-reuse
+else
+    mode_tag=${finetune_mode}
+fi
 lr_flag=${lr:+--lr ${lr}}
 
 echo "======================================================================================"
-echo "Finetuning ${model} (${finetune_mode}) on ${dataset} (order: ${task_seq}) seed=${seed}"
+echo "Finetuning ${model} (${mode_tag}) on ${dataset} (order: ${task_seq}) seed=${seed}"
 echo "======================================================================================"
 
-out_dir=outs/${model}/nlp_classification/${dataset}-${finetune_mode}/taskseq_${task_seq}
+out_dir=outs/${model}/nlp_classification/${dataset}-${mode_tag}/taskseq_${task_seq}
 mkdir -p ${out_dir}
 
 # tee -a: a re-run resumes (finished tasks are skipped), so appending keeps the
@@ -51,6 +61,7 @@ uv run python finetune_splitted.py \
     --model ${model} \
     --dataset ${dataset} \
     --finetune_mode ${finetune_mode} \
+    --lora_chain ${lora_chain} \
     --epochs ${epochs} \
     --batch_size ${batch_size} \
     --grad_accum_steps ${grad_accum_steps} \

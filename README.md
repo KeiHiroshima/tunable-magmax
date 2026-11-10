@@ -71,7 +71,9 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
    `--finetune_mode full` saves a `finetuned_{i}.pt` per task;
    `--finetune_mode lora` saves only a LoRA `adapter_{i}.pt` per task
    (`src/lora.py`), and each task starts from the zero-shot model with
-   every earlier adapter merged in.
+   every earlier adapter merged in. With `--lora_chain reuse` one adapter is
+   trained across every task instead: each task starts from the unmerged
+   zero-shot model and continues the previous task's adapter.
 2. `merge_and_evaluate(args)` mirrors vision's `evaluate_merged_fts_on_target_data`
    step for step — same `--target_config` loop, same `MergeSpec.needs_target_data`
    branch, every `--merge_fn` scored against every target environment — but
@@ -282,6 +284,7 @@ bash scripts/vision/finetune_merge.sh
 | `--wd` | 0.1 | StdCL/LSB: 0 |
 | `--lr_schedule` | `cosine` | StdCL/LSB: `constant` (no warmup) |
 | `--finetune_mode` | `full` | `full` or `lora` (StdCL/LSB, and CIFAR100/ImageNetR: LoRA on the image tower's q/v) |
+| `--lora_chain` | `merge` | how sequential LoRA tasks chain. `merge`: a fresh adapter per task, earlier ones merged into the weights (O-LoRA eq. 9). `reuse`: one adapter trained across every task on the unmerged base, so every task vector is a single rank-r adapter; needs `--finetune_mode lora` and `--sequential-finetuning`, and writes to `-lora-reuse` directories (scripts: `lora_chain=reuse`) |
 | `--grad_accum_steps` | 1 | NLP only: micro-batches per optimizer step |
 | `--merge_space` | `full` | `core`: merge in Core Space (`--finetune_mode lora` only; see above) |
 | `--scaling_coef` | 0.5 | StdCL/LSB: scale of the merged task vector |
@@ -372,7 +375,8 @@ running the entry points directly.
 ignores `--similarity_metric`. As for vision, a target environment whose
 results file already holds an `overall_accuracy` is skipped, so re-running any
 of these resumes where it stopped. Each method's stdout is appended to
-`outs/{model}/nlp_classification/{dataset}-{finetune_mode}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`.
+`outs/{model}/nlp_classification/{dataset}-{finetune_mode}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`
+(`{dataset}-lora-reuse` under `lora_chain=reuse`).
 
 Or directly:
 

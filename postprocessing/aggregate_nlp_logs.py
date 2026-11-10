@@ -7,7 +7,7 @@ plus "Average", each cell the mean +/- std over seeds.
 Unlike build_comparison_table.py (one model/dataset/order per invocation,
 read from beside the checkpoints), this walks a copied results tree
 
-    {root}/{model}/{dataset}[-lora]/ft-pattern_{order}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
+    {root}/{model}/{dataset}[-lora|-lora-reuse]/ft-pattern_{order}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
 
 discovers every (model, dataset, order, seed) in it, and prints one table per
 (model, dataset, order) plus one per (model, dataset) pooled over orders.

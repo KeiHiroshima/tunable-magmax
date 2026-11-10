@@ -26,8 +26,19 @@ target_config=${target_config:-target_data_config}   # target_data_config target
 # split (src/lora.py, lr 1e-3); its logs go under a -lora dir_name so they
 # never mix with a full run's.
 finetune_mode=${finetune_mode:-full}  # full lora
+# lora only. merge: an adapter per split, merged into the weights before the
+# next (O-LoRA eq. 9). reuse: one adapter trained across every split
+# (src/lora.py); its checkpoints and logs go under -lora-reuse instead of
+# -lora so the two never mix.
+lora_chain=${lora_chain:-merge}  # merge reuse
+# The suffix every -lora directory takes: lora, or lora-reuse.
+if [ "${finetune_mode}" = "lora" ] && [ "${lora_chain}" = "reuse" ]; then
+    mode_tag=lora-reuse
+else
+    mode_tag=${finetune_mode}
+fi
 if [ "${finetune_mode}" = "lora" ]; then
-    dir_name=${dir_name:-reproducing-lora}
+    dir_name=${dir_name:-reproducing-${mode_tag}}
 else
     dir_name=${dir_name:-reproducing}
 fi
@@ -56,7 +67,7 @@ if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
 fi
 
 echo "======================================================================================"
-echo "Merging ${model} (${finetune_mode}) for target data on ${dataset}-${n_splits} (method: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
+echo "Merging ${model} (${mode_tag}) for target data on ${dataset}-${n_splits} (method: ${method_tag}, target_config: ${target_config}, num_target_data: ${num_target_data}, seed: ${seed})"
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
@@ -72,6 +83,7 @@ uv run python merge_for_targetdata.py \
     --split_strategy class \
     --sequential-finetuning \
     --finetune_mode ${finetune_mode} \
+    --lora_chain ${lora_chain} \
     --results_db ${log_dir} \
     --taskseq_pattern ${task_seq} \
     --merge_fn ${merge_fn} \
