@@ -4,6 +4,7 @@ vision タスク（CLIP ViT-B/16、CIFAR-100 のクラス増分学習）では�
 
 - 比較の基準（全パラメータ学習）：[reproduction_report.md](reproduction_report.md) の再現実験（`logs/…/reproducing/`）
 - ブランチ：`exp/lora`（`scaling` から作成）
+- 続き：1 つの LoRA を全タスクで使い回す方式（`--lora_chain reuse`）との比較は [vision_lora_reuse_report.md](vision_lora_reuse_report.md)
 - 結果の JSON：`logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-{5,20,50}/taskseq_A/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
 
 ## 1. 実験設定
