@@ -33,10 +33,12 @@
 実行のコマンド：
 
 ```bash
-bash scripts/vision/launch_lora_reuse_experiment.sh   # 設定を固定し、記録を残してからバックグラウンドで実行
+bash scripts/vision/launch_experiment.sh lora_reuse   # 設定を固定し、記録を残してからバックグラウンドで実行
 ```
 
-`scripts/vision/run_lora_reuse_experiment.sh` は、3 枚の GPU で 27 ジョブ（3 設定 × 3 T × 3 seed）を並列に実行する。各ワーカーは GPU 1 枚と CPU 8 コアを専有する（`taskset`、`OMP_NUM_THREADS=8`）。
+設定は [scripts/vision/experiments/lora_reuse.sh](../scripts/vision/experiments/lora_reuse.sh) にある。実行したときのスクリプト名は `launch_lora_reuse_experiment.sh` と `run_lora_reuse_experiment.sh` だった。後で他の実験と共通にするために名前を変えたが、内容は同じである。
+
+`scripts/vision/run_parallel_experiment.sh` は、3 枚の GPU で 27 ジョブ（3 設定 × 3 T × 3 seed）を並列に実行する。各ワーカーは GPU 1 枚と CPU 8 コアを専有する（`taskset`、`OMP_NUM_THREADS=8`）。
 
 ## 2. 結果
 

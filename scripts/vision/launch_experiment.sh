@@ -1,39 +1,55 @@
 #!/usr/bin/env bash
-# Launch the --lora_chain reuse experiment (docs/lora_reuse_plan.md §5) exactly
-# as it was run: every setting below is fixed here, and the code state and
+# Launch one of the experiments in scripts/vision/experiments/ exactly as it
+# was run: every setting is fixed in its file, and the code state and
 # environment are recorded next to the logs before the run starts.
 #
 # The run is detached from the terminal (nohup + setsid), so it survives a
 # logout. Re-running this script resumes it: finished splits and result JSONs
-# are skipped (scripts/vision/run_lora_reuse_experiment.sh).
+# are skipped (scripts/vision/run_parallel_experiment.sh).
 #
-#   bash scripts/vision/launch_lora_reuse_experiment.sh
-#   tail -f logs/vision_lora_reuse_experiment/runner.log    # progress
-#   cat logs/vision_lora_reuse_experiment/status            # finished jobs
-#   kill -- -$(cat logs/vision_lora_reuse_experiment/runner.pid)   # stop everything
+#   bash scripts/vision/launch_experiment.sh tunable_ties
+#   tail -f logs/vision_tunable_ties_experiment/runner.log    # progress
+#   cat logs/vision_tunable_ties_experiment/status            # finished jobs
+#   kill -- -$(cat logs/vision_tunable_ties_experiment/runner.pid)   # stop everything
+#
+# An experiment whose settings define `phases` runs in that many steps, one
+# after another: each entry is "<name> VAR=value ...", overriding the
+# settings for that step (e.g. which n_splits, on which GPUs). A phase starts
+# when the previous one has finished, whether or not its jobs all succeeded.
+# Without `phases`, the experiment is a single run.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-# --- the experiment --------------------------------------------------------
-# Checkpoints go to a fresh base directory; only the zero-shot model and the
-# open_clip cache are linked from the earlier one (see run_info.txt).
-export MAGMAX_BASE_DIR=/mnt/ssd/KeiHiroshima/tunable_magmax
-export MAGMAX_DATA_DIR=/mnt/ssd/KeiHiroshima/data
-export variants="full lora-reuse lora"        # main: full vs lora-reuse; ablation: lora vs lora-reuse
-export n_splits_list="50 20 5"
-export seeds="3 4 5"
-export epochs=10
-export dataset=CIFAR100
-export merge_fns="finetune magmax masked_magmax_with_targetdata"
-export similarity_metrics="labels ot_embedded"
-export target_config=target_data_config
-export gpu_ids="0 1 2"
-export cores_per_worker=8
-export results_prefix=reproducing
-export ft_log_prefix=DEFAULT_NAME
-export log_dir=logs/vision_lora_reuse_experiment
-# ---------------------------------------------------------------------------
+# Internal: the detached run itself, every phase in turn, started by the
+# launch at the bottom. Selected by an environment variable rather than an
+# option, since test/characterization/test_cli_surface.py checks every long
+# option a script uses.
+if [ -n "${LAUNCH_EXPERIMENT_RUN:-}" ]; then
+    # shellcheck source=/dev/null
+    source "scripts/vision/experiments/${LAUNCH_EXPERIMENT_RUN}.sh"
+    if [ -z "${phases+x}" ]; then
+        exec bash scripts/vision/run_parallel_experiment.sh
+    fi
+    failed=0
+    for entry in "${phases[@]}"; do
+        read -r name overrides <<< "${entry}"
+        echo "$(date '+%F %T') ===== phase ${name}: ${overrides}"
+        # The overrides are shell assignments (quoted values allowed), applied
+        # in a subshell so they do not carry over into the next phase.
+        (
+            eval "export ${overrides}"
+            phase=${name} bash scripts/vision/run_parallel_experiment.sh
+        ) || failed=1
+    done
+    exit "${failed}"
+fi
+
+experiment=${1:?usage: launch_experiment.sh <name>, one of: $(ls scripts/vision/experiments | sed 's/\.sh$//' | tr '\n' ' ')}
+settings=scripts/vision/experiments/${experiment}.sh
+[ -f "${settings}" ] || { echo "no such experiment: ${settings}" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "${settings}"
 
 mkdir -p "${log_dir}"
 if [ -f "${log_dir}/runner.pid" ] && kill -0 "$(cat "${log_dir}/runner.pid")" 2>/dev/null; then
@@ -42,19 +58,15 @@ if [ -f "${log_dir}/runner.pid" ] && kill -0 "$(cat "${log_dir}/runner.pid")" 2>
 fi
 
 # Record what is about to run: the code (commit + any uncommitted changes),
-# the settings above, and the machine. Appended, so a resumed run keeps the
-# record of every launch.
+# the settings, and the machine. Appended, so a resumed run keeps the record
+# of every launch.
 stamp=$(date '+%Y%m%d-%H%M%S')
 {
-    echo "===== launch ${stamp} ====="
+    echo "===== launch ${stamp}: ${settings} ====="
     echo "commit: $(git rev-parse HEAD) ($(git symbolic-ref -q HEAD || echo detached))"
     echo "uncommitted changes: $(git status -s | wc -l) files (diff: code_${stamp}.diff)"
     echo "settings:"
-    for v in MAGMAX_BASE_DIR MAGMAX_DATA_DIR variants n_splits_list seeds epochs dataset \
-             merge_fns similarity_metrics target_config gpu_ids cores_per_worker \
-             results_prefix ft_log_prefix log_dir; do
-        echo "  ${v}=${!v}"
-    done
+    grep -v '^#' "${settings}" | grep -v '^$' | sed 's/^export //; s/^/  /'
     echo "base dir links:"
     ls -l "${MAGMAX_BASE_DIR}/checkpoints/ViT-B-16" | grep -- '->' | sed 's/^/  /'
     echo "host: $(hostname), $(nproc) cores"
@@ -72,7 +84,7 @@ done >> "${log_dir}/code_${stamp}.diff"
 
 # setsid gives the run its own process group, so the kill above stops every
 # worker with it.
-nohup setsid bash scripts/vision/run_lora_reuse_experiment.sh \
+LAUNCH_EXPERIMENT_RUN=${experiment} nohup setsid bash scripts/vision/launch_experiment.sh \
     >> "${log_dir}/runner.log" 2>&1 < /dev/null &
 echo $! > "${log_dir}/runner.pid"
 echo "started (pid $(cat "${log_dir}/runner.pid")); log: ${log_dir}/runner.log"
