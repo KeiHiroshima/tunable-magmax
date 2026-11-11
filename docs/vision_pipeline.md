@@ -107,17 +107,19 @@ finetune_merge.sh ──> finetune_splitted.py の後に merge_for_targetdata.py
    - 各タスクの test から抽出し、そのうち **10% を meta データ**（選好ベクトルの推定用）、残りを評価用にする。
    - 件数が足りないタスクは、警告を出して取れる分だけ取る（[`_clamp_to_available`](../src/datasets/common.py#L219)）。
 6. **マージ**：[eval.py:96](../src/eval.py#L96) の `_build_merged_encoder`。
-   - **提案手法**（`spec.needs_target_data`）：[`_compute_similarity_weights`](../src/eval.py#L81) から [task_vectors.py:341](../src/merging/task_vectors.py#L341) の `merge_max_abs_masked_with_targetdata` を呼ぶ。 **[vision固有]**
+   - **選好ベクトルで重み付けするマージ**（`spec.needs_target_data`。Tunable MAGMAX と Tunable TIES）：[`_compute_similarity_weights`](../src/eval.py#L81) から [task_vectors.py](../src/merging/task_vectors.py) の `merge_with_targetdata` を呼ぶ。 **[vision固有]**
      1. タスクごとに、meta データとの類似度を `--similarity_metric` に応じて計算する（[similarity.py](../src/merging/similarity.py)）。
         - `labels`：[`count_labels`](../src/merging/similarity.py#L510) で、meta データのうちそのタスクのクラスに属する件数を数える。
         - `cosine`/`mmd`/`ot`：[`compute_cosine_similarity`](../src/merging/similarity.py#L419)、[`compute_mmd_similarity`](../src/merging/similarity.py#L367)、[`compute_otdd_similarity`](../src/merging/similarity.py#L463) で、train の部分集合と meta データの分布を比べる。`_embedded` が付くと、そのタスクのモデルの特徴空間（`FeatureCost`）で比べる。OT には [otdd.py](../src/merging/otdd.py) を使う。
-     2. 類似度を正規化して選好ベクトル `weights_each_task` にする。
-     3. [task_vectors.py:83](../src/merging/task_vectors.py#L83) の `mask_and_merge_by_weights` でマージする。 **[共通]**（NLP の提案手法も同じ関数を使う。違うのは選好ベクトルの作り方だけ）
-     4. `num_unaligned` と `num_params_all` を、評価より先に結果 JSON へ書き込む。
+     2. 類似度を正規化して選好ベクトル `weights_each_task` にする（1 と 2 が `compute_preference_weights`）。
+     3. 手法ごとの `spec.weighted_fn` でマージする。 **[共通]**（NLP も同じ関数を使う。違うのは選好ベクトルの作り方だけ）
+        - Tunable MAGMAX：`masked_magmax_by_weights`（中身は `mask_and_merge_by_weights`）。各タスクが受け持つ要素数を重みに比例させる。
+        - Tunable TIES：`weighted_ties_by_weights`（中身は `ties(task_vectors, weights)`）。符号の選出と、符号が一致した値の平均を重み付きにする。
+     4. マージが診断値を返したとき（Tunable MAGMAX の `num_unaligned` と `num_params_all`）だけ、評価より先に結果 JSON へ書き込む。
    - **ベースライン**：[merging/registry.py:88](../src/merging/registry.py#L88) の `apply_merge`。 **[共通]**
      - `magmax` は [task_vectors.py:53](../src/merging/task_vectors.py#L53) の `merge_max_abs`、`random_mix` は `merge_rnd_mix`、`ties` は [ties.py](../src/merging/ties.py)、`average` は和を取ってからタスク数で割る。
      - `finetune` はマージせず、最後のタスクのベクトルをそのまま返す。
-     - vision ではこの処理が環境ごとに毎回走る（NLP は1回だけ計算して使い回す）。
+     - 環境によらず同じモデルになるので、最初に評価する環境で1回だけマージし、残りの環境では使い回す（NLP と同じ）。すべての環境が評価済みなら、マージ自体を行わない。`random_mix` も1回の乱数で決めた混合を全環境で使う。
    - zero-shot + 0.5 × マージ済みベクトルを [task_vector.py:93](../src/merging/task_vector.py#L93) の `TaskVector.apply_to` で作る。 **[共通]**
 7. **評価**：[eval.py:22](../src/eval.py#L22) の `eval_given_dataset`。 **[vision固有]**
    - [heads.py:71](../src/heads.py#L71) の `get_classification_head` で、データセット全クラスのゼロショット分類ヘッドを作る。マージ後のモデルは、全クラスの中から予測する。
@@ -156,7 +158,7 @@ uv run python postprocessing/build_comparison_table.py --backend vision \
 | 1タスクの学習 | [trainer.py](../src/trainer.py) `build_scheduler`、[utils.py](../src/utils.py) `cosine_lr` | [trainer.py](../src/trainer.py) のそれ以外（`setup_model_for_training`、`run_training_epoch` など） |
 | チェックポイントのパス | [paths.py](../src/paths.py)、[config.py](../src/config.py) | `_ckpt_dir`（vision_backend.py） |
 | タスクベクトル | [task_vector.py](../src/merging/task_vector.py) | — |
-| マージ手法 | [merging/registry.py](../src/merging/registry.py)、[task_vectors.py](../src/merging/task_vectors.py) `mask_and_merge_by_weights` などのマージ関数、[ties.py](../src/merging/ties.py) | [task_vectors.py](../src/merging/task_vectors.py) `merge_max_abs_masked_with_targetdata` |
+| マージ手法 | [merging/registry.py](../src/merging/registry.py)、[task_vectors.py](../src/merging/task_vectors.py) `mask_and_merge_by_weights` などのマージ関数、[ties.py](../src/merging/ties.py) | [task_vectors.py](../src/merging/task_vectors.py) `compute_preference_weights`、`merge_with_targetdata` |
 | 選好ベクトル | — | [similarity.py](../src/merging/similarity.py)、[otdd.py](../src/merging/otdd.py) |
 | ターゲット環境 | [target_env.py](../src/target_env.py) | [datasets/common.py](../src/datasets/common.py) `construct_target_dataset`、`construct_train_subset_each_task` |
 | 評価 | [utils.py](../src/utils.py) `has_evaluation_result` | [eval.py](../src/eval.py)、[utils.py](../src/utils.py) `do_eval` |

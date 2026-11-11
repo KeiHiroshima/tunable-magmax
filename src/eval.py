@@ -11,6 +11,7 @@ from src.datasets.common import (
 from src.datasets.registry import get_dataset
 from src.heads import get_classification_head
 from src.merging.registry import apply_merge, result_name
+from src.merging.task_vectors import merge_with_targetdata
 from src.modeling import ImageClassifier, ImageEncoder
 from src.target_env import load_target_envs
 
@@ -95,7 +96,8 @@ def _compute_similarity_weights(
     whenever it is not zeroshot.pt (--finetune_mode lora), or those encoders
     would silently be built on a model the task vectors' keys do not match."""
     assert spec.needs_target_data, f"{spec.name} does not take target data"
-    return spec.fn(
+    return merge_with_targetdata(
+        spec.weighted_fn,
         task_vectors,
         train_subset_each_task,
         target_dataset_meta,
@@ -198,9 +200,26 @@ def evaluate_merged_fts_on_target_data(
     # "<merge_fn>-core".
     name = result_name(spec.name, args.merge_space)
 
+    # A merge that does not take target data (finetune/random_mix/average/
+    # ties/magmax) is the same whichever target environment it is scored
+    # against, so it is built once and reused across the loop below, as the
+    # NLP backend does; only the preference-weighted merges are rebuilt per
+    # environment. Built lazily, so a resumed run whose environments are all
+    # finished does no merging at all.
+    fixed_merge = None
+
+    def _fixed_merged_encoder():
+        nonlocal fixed_merge
+        if fixed_merge is None:
+            fixed_merge = _build_merged_encoder(
+                task_vectors, spec, args, pretrained_checkpoint, scaling_coef,
+                core_space=core_space,
+            )
+        return fixed_merge
+
     for env in load_target_envs(args, n_tasks=args.n_splits):
-        # merge_max_abs_masked_with_targetdata names its own log file after
-        # this, and reads it off args rather than taking it as a parameter.
+        # merge_with_targetdata names its own log file after this, and reads
+        # it off args rather than taking it as a parameter.
         args.target_id = env.target_id
 
         suffix = f"{args.similarity_metric}_" if is_similarity_merge else ""
@@ -240,16 +259,19 @@ def evaluate_merged_fts_on_target_data(
             f"Target_id {env.target_id}: {env.n_tasks_fetched} tasks are fetched, {env.ratio}"
         )
 
-        image_encoder, log_data_merge_fn = _build_merged_encoder(
-            task_vectors,
-            spec,
-            args,
-            pretrained_checkpoint,
-            scaling_coef,
-            train_subset_each_task=train_subset_each_task,
-            target_dataset_meta=target_dataset_meta,
-            core_space=core_space,
-        )
+        if is_similarity_merge:
+            image_encoder, log_data_merge_fn = _build_merged_encoder(
+                task_vectors,
+                spec,
+                args,
+                pretrained_checkpoint,
+                scaling_coef,
+                train_subset_each_task=train_subset_each_task,
+                target_dataset_meta=target_dataset_meta,
+                core_space=core_space,
+            )
+        else:
+            image_encoder, log_data_merge_fn = _fixed_merged_encoder()
 
         acc_list = eval_given_dataset(
             image_encoder, target_dataset_test, args.dataset, args
@@ -297,5 +319,6 @@ def evaluate_merged_fts_on_target_data(
 
         _save_target_eval_results(log_data, spec, args, suffix_dir, file_name)
 
-        del image_encoder
-        torch.cuda.empty_cache()
+        if is_similarity_merge:
+            del image_encoder
+            torch.cuda.empty_cache()

@@ -32,7 +32,7 @@ finetune_merge.sh ──> finetune.sh の後に merge.sh
 |---|---|---|
 | [finetune_all.sh](../scripts/nlp/finetune_all.sh) | `dataset` に応じて回す Order を決め（StdCL は `1 2 3`、LSB は `4 5 6`）、seed `3 4 5` との組合せごとに `finetune.sh` を呼ぶ。一部の実行が失敗しても止まらず、最後に失敗した実行を一覧表示する | [NLP固有] |
 | [merge_comparison_all.sh](../scripts/nlp/merge_comparison_all.sh) | 上と同じ Order × seed のループで `merge_comparison.sh` を呼ぶ | [NLP固有] |
-| [merge_comparison.sh](../scripts/nlp/merge_comparison.sh) | `merge_fns`（finetune, random_mix, average, ties, magmax, masked_magmax_with_targetdata）を1つずつ `merge.sh` に渡す。vision と違い、similarity metric のループはない | [NLP固有] |
+| [merge_comparison.sh](../scripts/nlp/merge_comparison.sh) | `merge_fns`（finetune, random_mix, average, ties, magmax, masked_magmax_with_targetdata, weighted_ties_with_targetdata）を1つずつ `merge.sh` に渡す。vision と違い、similarity metric のループはない | [NLP固有] |
 | [finetune.sh](../scripts/nlp/finetune.sh) | 変数の既定値を決めて `finetune_splitted.py` を起動する。`model=t5-large` なら `finetune_mode=lora`、それ以外は `full`。学習の既定値は `epochs=1`、`batch_size=8`、`grad_accum_steps=8`。`lr` は環境変数で指定したときだけ `--lr` として渡す | [NLP固有] |
 | [merge.sh](../scripts/nlp/merge.sh) | `merge_for_targetdata.py` を起動する。`finetune_mode` は `finetune.sh` と同じ規則で決まり、`--eval_full_testsets` が既定で有効 | [NLP固有] |
 | [finetune_merge.sh](../scripts/nlp/finetune_merge.sh) | `finetune.sh` の後に `merge.sh` を実行する | [NLP固有] |
@@ -131,9 +131,11 @@ $MAGMAX_BASE_DIR/checkpoints/{model}/sequential_finetuning/nlp_classification/{d
 2. 結果ファイル `{merge_fn}/target{id}_seed{s}.json` に `overall_accuracy` がすでにあれば、その環境は飛ばす（[utils.py:73](../src/utils.py#L73) `has_evaluation_result`）。 **[共通]**
 3. 混ぜるタスクの選択：[target_env.py:125](../src/target_env.py#L125) の `select_target_tasks`。 **[共通]**
 4. **マージの分岐**
-   - **提案手法**（`masked_magmax_with_targetdata`、`spec.needs_target_data`）：環境ごとに次の2段階でマージする。
+   - **選好ベクトルで重み付けするマージ**（`masked_magmax_with_targetdata` と `weighted_ties_with_targetdata`、`spec.needs_target_data`）：環境ごとに次の2段階でマージする。
      1. [target_data.py:28](../src/nlp/target_data.py#L28) の `build_target_weights` で、環境の混合比をそのまま選好ベクトルにする。NLP ではタスクがそれぞれ別のデータセットなので、どのタスクから何割引いたかは構築時点でわかっており、類似度で推定する必要がない。 **[NLP固有]**
-     2. [task_vectors.py:83](../src/merging/task_vectors.py#L83) の `mask_and_merge_by_weights` で、選好ベクトルに従ってタスクベクトルを要素ごとに選んで統合する。 **[共通]**（vision の提案手法も最後にこの関数を呼ぶ）
+     2. 手法ごとの `spec.weighted_fn` で、選好ベクトルに従って統合する。 **[共通]**（vision も最後に同じ関数を呼ぶ）
+        - Tunable MAGMAX（`masked_magmax_by_weights`）：タスクベクトルを要素ごとに選び、各タスクが受け持つ要素数を重みに比例させる。
+        - Tunable TIES（`weighted_ties_by_weights`）：TIES の符号の選出と、符号が一致した値の平均を、選好ベクトルで重み付けする。
    - **ベースライン**：[merging/registry.py:88](../src/merging/registry.py#L88) の `apply_merge` で、最初に1回だけマージし、全環境で使い回す。 **[共通]**
      - 実体は [task_vectors.py](../src/merging/task_vectors.py) の `merge_max_abs`（magmax）と `merge_rnd_mix`、および [ties.py](../src/merging/ties.py)。
      - `finetune` はマージせず、最後のタスクのベクトルをそのまま返す。

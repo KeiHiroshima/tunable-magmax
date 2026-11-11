@@ -156,8 +156,8 @@ def test_preexisting_file_content_wins_over_the_new_log_data(tmp_path):
 def test_merge_and_eval_write_to_the_same_results_file(tmp_path, monkeypatch, merge_space, dir_name):
     """The proposed method's results are assembled by two writers.
 
-    merge_max_abs_masked_with_targetdata records num_unaligned/num_params_all
-    while merging; src/eval.py then adds the accuracies to the same file and
+    merge_with_targetdata records the merge's diagnostics (Tunable MAGMAX:
+    num_unaligned/num_params_all) while merging; src/eval.py then adds the accuracies to the same file and
     keeps what is already there. If the two spell the path differently the
     merge diagnostics end up in a directory of their own and never reach the
     results — which is what happened when the layout moved from Python
@@ -208,10 +208,10 @@ def test_merge_function_derives_its_log_path_from_the_cli_name():
 
     from src.merging import task_vectors
 
-    source = inspect.getsource(task_vectors.merge_max_abs_masked_with_targetdata)
+    source = inspect.getsource(task_vectors.merge_with_targetdata)
 
     assert "result_name(args.merge_fn, args.merge_space)" in source
-    assert '"merge_max_abs_masked_with_targetdata"' not in source
+    assert '"merge_with_targetdata"' not in source
 
 
 # --- skip-if-done: which existing results files count as finished -----------
@@ -228,7 +228,7 @@ def test_results_file_with_an_accuracy_is_done(tmp_path):
 
 
 def test_results_file_holding_only_the_merge_log_is_not_done(tmp_path):
-    # What merge_max_abs_masked_with_targetdata leaves behind when the run dies
+    # What merge_with_targetdata leaves behind when the run dies
     # between merging and evaluating: the merge log, no accuracy.
     path = tmp_path / "merged_only.json"
     path.write_text(json.dumps({"num_unaligned": {"task_1": 0}, "num_params_all": 10}))
