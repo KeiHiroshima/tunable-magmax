@@ -39,7 +39,7 @@ finetune_merge.sh ──> finetune.sh の後に merge.sh
 | [run_t5-base_lsb.sh](../scripts/nlp/run_t5-base_lsb.sh) | t5-base × LSB について、`finetune_all.sh` と `merge_comparison_all.sh` を続けて実行する。Order 4/5/6 を GPU を 1 枚ずつ使って並列に回し、ログは `logs/nlp_sweep/t5-base_LSB_order{4,5,6}.log` に出る。結果は [nlp_results_report.md](nlp_results_report.md) にまとめた | [NLP固有] |
 | [run_parallel_experiment.sh](../scripts/nlp/run_parallel_experiment.sh) | `model:variant`（variant は `full`、`lora`、`lora-reuse`）× dataset × Order × seed のジョブを、GPU 1 枚につき 1 つずつ並列に回す。各 worker は割り当てた GPU と CPU コア（`first_core` から `cores_per_worker` 個ずつ。`taskset` で固定）だけを使い、ジョブを始める前に GPU に他のプロセスがいれば空くまで待つ。`finetune=1` なら `finetune.sh` を、続けて `merge_comparison.sh` を実行する。`dry_run=1` で実行計画だけを表示する | [NLP固有] |
 | [launch_experiment.sh](../scripts/nlp/launch_experiment.sh) | `scripts/nlp/experiments/<name>.sh` の設定で `run_parallel_experiment.sh` を端末から切り離して実行する。実行前に、コミット・設定・環境を `run_info.txt` に、未コミットの差分を `code_*.diff` に残す。`phases` があれば順に実行する（vision の同名スクリプトと同じ仕組み） | [NLP固有] |
-| [experiments/tunable_ties.sh](../scripts/nlp/experiments/tunable_ties.sh) | Tunable TIES の実験の設定。学習済みの 36 run に Tunable TIES を加える `existing` と、LoRA reuse の 36 run を学習してから比較手法でマージする `reuse` の 2 フェーズ。GPU 1・2 とコア 8–23 だけを使う | [NLP固有] |
+| [experiments/tunable_ties.sh](../scripts/nlp/experiments/tunable_ties.sh) | Tunable TIES の実験（LSB のみ）の設定。学習済みの 18 run に Tunable TIES を加える `existing` と、LoRA reuse の 18 run を学習してから比較手法でマージする `reuse` の 2 フェーズ。GPU 1・2 とコア 8–23 だけを使う | [NLP固有] |
 
 `finetune.sh` と `merge.sh` は、ほかに次の処理をする。
 
