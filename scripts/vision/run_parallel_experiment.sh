@@ -1,24 +1,30 @@
 #!/usr/bin/env bash
-# The --lora_chain reuse experiment (docs/lora_reuse_plan.md §5): fine-tune and
-# merge CIFAR-100 for every (variant, n_splits, seed), three jobs at a time, one
-# per GPU.
+# Fine-tune and merge CIFAR-100 for every (variant, n_splits, seed), three jobs
+# at a time, one per GPU. The experiments run with it, and their fixed
+# settings, are in scripts/vision/experiments/; launch one with
+# scripts/vision/launch_experiment.sh.
 #
 #   variant    what is trained                             results (dir_name)
 #   full       every image-tower parameter                 reproducing
 #   lora-reuse one LoRA adapter across every split         reproducing-lora-reuse
 #   lora       a LoRA adapter per split, merged in (O-LoRA) reproducing-lora
 #
-# The main comparison is full vs lora-reuse; lora vs lora-reuse is the ablation
-# over how the LoRA chain is built. Every job fine-tunes (scripts/vision/
-# finetune.sh) and then merges (scripts/vision/merge_comparison.sh) with
-# merge_fns, by default the no-merge baseline, MAGMAX and Tunable MAGMAX.
+# Every job fine-tunes (scripts/vision/finetune.sh) and then merges
+# (scripts/vision/merge_comparison.sh) with merge_fns. Finished splits are
+# skipped, so on checkpoints that already exist a job only merges.
 #
 # Parallelism: worker i owns GPU i and CPU cores [i*cores_per_worker,
 # (i+1)*cores_per_worker), pinned with taskset, so its DataLoader workers and
-# the CPU-heavy masked merge never compete with another worker's. Fine-tuning
+# the CPU-heavy merges never compete with another worker's. Fine-tuning
 # therefore runs on one GPU per job (no DataParallel). Workers take jobs from
 # a shared queue, longest first, so the GPUs stay busy until the queue is
 # empty.
+#
+# Memory: a job whose line starts with one of heavy_jobs (e.g. "full 50": TIES
+# on full fine-tuning at T=50 stacks fifty full-size task vectors, ~140 GB)
+# goes to a queue of its own that only the first heavy_workers workers take,
+# before they join the others on the rest. At most heavy_workers such jobs
+# therefore run at once.
 #
 # A failing job does not stop the others; failures are listed at the end and
 # the exit status is non-zero. Finished splits and result JSONs are skipped
@@ -28,8 +34,8 @@
 # it must hold checkpoints/ViT-B-16/zeroshot.pt (and the open_clip cache).
 #
 # Everything can be overridden from the environment, e.g.
-#   variants="lora-reuse" n_splits_list="5" seeds="3" bash scripts/vision/run_lora_reuse_experiment.sh
-#   dry_run=1 bash scripts/vision/run_lora_reuse_experiment.sh   # print the plan only
+#   variants="lora-reuse" n_splits_list="5" seeds="3" bash scripts/vision/run_parallel_experiment.sh
+#   dry_run=1 bash scripts/vision/run_parallel_experiment.sh   # print the plan only
 
 set -u
 
@@ -50,6 +56,11 @@ log_dir=${log_dir:-logs/vision_lora_reuse_experiment}
 results_prefix=${results_prefix:-reproducing}
 ft_log_prefix=${ft_log_prefix:-DEFAULT_NAME}
 dry_run=${dry_run:-0}
+heavy_jobs=${heavy_jobs:-}          # e.g. "full 50": job-line prefixes, separated by commas
+heavy_workers=${heavy_workers:-1}
+# Names this run's queue and status files, so the phases of one experiment
+# (scripts/vision/launch_experiment.sh) can share a log_dir.
+phase=${phase:-}
 
 if [ -z "${MAGMAX_BASE_DIR:-}" ]; then
     echo "set MAGMAX_BASE_DIR (where checkpoints go; see src/config.py)" >&2
@@ -68,8 +79,9 @@ fi
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "${log_dir}"
-queue=${log_dir}/queue
-status=${log_dir}/status
+queue=${log_dir}/queue${phase:+.${phase}}
+heavy_queue=${queue}.heavy
+status=${log_dir}/status${phase:+.${phase}}
 
 # Longest jobs first (full fine-tuning, then large n_splits), so no GPU is
 # left with one long job after the others have run dry.
@@ -86,24 +98,48 @@ for variant in full lora-reuse lora; do
     done
 done
 
+# Move the heavy jobs to their own queue, keeping their order.
+: > "${heavy_queue}"
+if [ -n "${heavy_jobs}" ]; then
+    if [ "${heavy_workers}" -lt 1 ] || [ "${heavy_workers}" -gt "${n_workers}" ]; then
+        echo "heavy_workers must be between 1 and ${n_workers}" >&2
+        exit 1
+    fi
+    IFS=, read -ra heavy_prefixes <<< "${heavy_jobs}"
+    : > "${queue}.light"
+    while read -r line; do
+        dest=${queue}.light
+        for prefix in "${heavy_prefixes[@]}"; do
+            [[ "${line} " == "${prefix} "* ]] && dest=${heavy_queue}
+        done
+        echo "${line}" >> "${dest}"
+    done < "${queue}"
+    mv "${queue}.light" "${queue}"
+fi
+
 echo "======================================================================================"
-echo "MAGMAX_BASE_DIR=${MAGMAX_BASE_DIR}"
-echo "$(wc -l < "${queue}") jobs on GPUs (${gpu_ids}), ${cores_per_worker} cores each; logs: ${log_dir}/"
+echo "${phase:+phase ${phase}: }MAGMAX_BASE_DIR=${MAGMAX_BASE_DIR}"
+echo "$(cat "${queue}" "${heavy_queue}" | wc -l) jobs on GPUs (${gpu_ids}), ${cores_per_worker} cores each; logs: ${log_dir}/"
 echo "merge_fns=(${merge_fns}) similarity_metrics=(${similarity_metrics}) epochs=${epochs}"
 echo "results: logs/.../${results_prefix}[-lora|-lora-reuse]/, fine-tuning logs: .../${ft_log_prefix}[-lora|-lora-reuse]/"
-cat "${queue}" | sed 's/^/  /'
+sed 's/^/  /' "${queue}"
+if [ -s "${heavy_queue}" ]; then
+    echo "heavy (${heavy_jobs}), run by the first ${heavy_workers} worker(s) only:"
+    sed 's/^/  /' "${heavy_queue}"
+fi
 echo "======================================================================================"
 if [ "${dry_run}" = "1" ]; then
     exit 0
 fi
 : > "${status}"
 
-# Pop the first line of the queue, under a lock shared by every worker.
+# Pop the first line of a queue file, under a lock shared by every worker.
 pop_job() {
+    local file=$1
     (
         flock 9
-        line=$(head -n 1 "${queue}")
-        [ -n "${line}" ] && sed -i '1d' "${queue}"
+        line=$(head -n 1 "${file}")
+        [ -n "${line}" ] && sed -i '1d' "${file}"
         echo "${line}"
     ) 9> "${queue}.lock"
 }
@@ -129,8 +165,9 @@ worker() {
     local first=$((i * cores_per_worker))
     local cores="${first}-$((first + cores_per_worker - 1))"
     while true; do
-        local job
-        job=$(pop_job)
+        local job=""
+        [ "${i}" -lt "${heavy_workers}" ] && job=$(pop_job "${heavy_queue}")
+        [ -z "${job}" ] && job=$(pop_job "${queue}")
         [ -z "${job}" ] && break
         read -r variant n_splits seed <<< "${job}"
         local log=${log_dir}/${variant}_${dataset}-${n_splits}_seed${seed}.log
@@ -160,7 +197,7 @@ done
 
 echo "======================================================================================"
 if grep -q '^FAILED' "${status}"; then
-    echo "Failed jobs (see ${log_dir}/<variant>_${dataset}-<n_splits>_seed<seed>.log):"
+    echo "Failed jobs${phase:+ in phase ${phase}} (see ${log_dir}/<variant>_${dataset}-<n_splits>_seed<seed>.log):"
     grep '^FAILED' "${status}" | sed 's/^FAILED /  /'
     exit 1
 fi

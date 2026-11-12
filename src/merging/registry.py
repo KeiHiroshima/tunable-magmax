@@ -24,10 +24,11 @@ from dataclasses import dataclass
 
 from src.merging.core_space import result_name  # noqa: F401  (re-exported)
 from src.merging.task_vectors import (
+    masked_magmax_by_weights,
     merge_max_abs,
-    merge_max_abs_masked_with_targetdata,
     merge_rnd_mix,
     ties,
+    weighted_ties_by_weights,
 )
 
 
@@ -42,17 +43,28 @@ class MergeSpec:
     averaged    divide the merged vector by the number of task vectors. Kept as
                 a flag rather than folded into `fn` because `fn` is the builtin
                 `sum`, which several callers rely on being exactly that.
-    needs_target_data  the merge depends on target-environment data, so it
-                cannot be called with just (task_vectors).
-    nlp_supported  whether the NLP backends can run it.
+    weighted_fn a preference-weighted merge ("Tunable ..."):
+                (task_vectors, weights_each_task, *, seed) ->
+                (TaskVector, diagnostics dict for the results JSON). The
+                weights are one target environment's preference vector, which
+                the backend supplies (vision infers it from the target data,
+                NLP knows it), so such a merge has no `fn`.
+    nlp_supported  whether the NLP backends can run it through the plain
+                task_vectors -> TaskVector path (merge_task_vectors).
     """
 
     name: str
     fn: Callable | None
     label: str
     averaged: bool = False
-    needs_target_data: bool = False
+    weighted_fn: Callable | None = None
     nlp_supported: bool = True
+
+    @property
+    def needs_target_data(self) -> bool:
+        """The merge depends on a target environment, so it cannot be called
+        with just (task_vectors)."""
+        return self.weighted_fn is not None
 
 
 # Order matters: postprocessing/utils.py assigns plot colors by position.
@@ -62,15 +74,22 @@ MERGE_SPECS: dict[str, MergeSpec] = {
     "average": MergeSpec("average", sum, "Average", averaged=True),
     "ties": MergeSpec("ties", ties, "TIES-Merging"),
     "magmax": MergeSpec("magmax", merge_max_abs, "MAGMAX"),
+    # The preference-weighted merges need a whole target-environment flow
+    # (which tasks, in what ratio, sampled eval data) rather than a plain
+    # task_vectors -> TaskVector call. vision's src/eval.py and the StdCL/LSB
+    # backend build that flow themselves, branching on needs_target_data.
     "masked_magmax_with_targetdata": MergeSpec(
         "masked_magmax_with_targetdata",
-        merge_max_abs_masked_with_targetdata,
+        None,
         "Tunable MAGMAX",
-        needs_target_data=True,
-        # Needs a whole target-environment-construction flow (which tasks, in
-        # what ratio, sampled eval data) rather than a plain
-        # task_vectors -> TaskVector call. The NLP backends build that flow
-        # themselves.
+        weighted_fn=masked_magmax_by_weights,
+        nlp_supported=False,
+    ),
+    "weighted_ties_with_targetdata": MergeSpec(
+        "weighted_ties_with_targetdata",
+        None,
+        "Tunable TIES",
+        weighted_fn=weighted_ties_by_weights,
         nlp_supported=False,
     ),
 }
@@ -95,6 +114,11 @@ def apply_merge(spec: MergeSpec, task_vectors: list, core_space=None, **kwargs):
     With a `core_space` (src/merging/core_space.py) the merge runs on the
     task vectors rotated into it, and the result is rotated back.
     """
+    if spec.needs_target_data:
+        raise TypeError(
+            f"{spec.name} merges by a target environment's preference vector; "
+            "call spec.weighted_fn with one"
+        )
     if spec.fn is None:
         # "finetune" = the CL baseline: no merging at all, just keep the model
         # as it came out of the last task.

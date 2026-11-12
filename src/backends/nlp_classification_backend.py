@@ -34,7 +34,6 @@ from src.config import get_zeroshot_checkpoint
 from src.merging.core_space import CoreSpace
 from src.merging.registry import apply_merge, get_merge_spec, result_name
 from src.merging.task_vector import TaskVector
-from src.merging.task_vectors import mask_and_merge_by_weights
 from src.nlp.finetune_nlp import finetune_task_sequence
 from src.nlp.long_sequence_benchmark import EVAL_BATCH_SIZE, build_task_sequence
 from src.lora import LoraConfig, adapter_task_vectors, lora_chain
@@ -217,9 +216,9 @@ def merge_and_evaluate(args):
     # Every baseline (finetune/random_mix/average/ties/magmax) merges the same
     # way regardless of which target environment it is later scored against,
     # so it is computed once here rather than inside the loop below. Only the
-    # proposed method's weights — and therefore its merged vector — depend on
-    # the target environment (its preference vector *is* that environment's
-    # task-sampling ratio; see src/nlp/target_data.py), so it is left to be
+    # preference-weighted merges (Tunable MAGMAX / TIES) depend on the target
+    # environment (their preference vector *is* that environment's
+    # task-sampling ratio; see src/nlp/target_data.py), so they are left to be
     # recomputed per environment. Merged lazily, so a resumed run whose
     # environments are all finished does no merging at all.
     fixed_merged_model = None
@@ -261,7 +260,7 @@ def merge_and_evaluate(args):
             )  # weight is obviously just the ratio of each task in the target enironment which is given in task incremental learning
             # Under --merge_space core the budgets — and num_unaligned /
             # num_params_all — count core-matrix entries, not weights.
-            merged_tv, num_unaligned, num_params_all = mask_and_merge_by_weights(
+            merged_tv, diagnostics = spec.weighted_fn(
                 task_vectors if core_space is None else core_space.to_core(task_vectors),
                 weights_each_task,
                 seed=derive_seed(args.seed, env.target_id),
@@ -299,20 +298,19 @@ def merge_and_evaluate(args):
             "overall_accuracy": overall_accuracy,
         }
         if spec.needs_target_data:
-            # Only the proposed method has a preference vector to report and
-            # elements that missed their task's budget (Algorithm 1's random
-            # leftover assignment) to account for.
+            # Only the preference-weighted merges have a preference vector to
+            # report, plus whatever their merge step accounts for (Tunable
+            # MAGMAX: the elements that missed their task's budget).
             result["weights_each_task"] = weights_each_task
-            result["num_unaligned"] = num_unaligned
-            result["num_params_all"] = num_params_all
+            result.update(diagnostics)
 
         results_by_target[env.target_id] = result
         with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
 
-    # The paper's own metric, for the methods that yield one model. The
-    # proposed method's model depends on the target environment, so it has
-    # no single Average Accuracy (its all-tasks-uniform environment is the
+    # The paper's own metric, for the methods that yield one model. A
+    # preference-weighted merge's model depends on the target environment, so
+    # it has no single Average Accuracy (its all-tasks-uniform environment is the
     # closest counterpart).
     if args.eval_full_testsets and not spec.needs_target_data:
         _evaluate_on_full_testsets(

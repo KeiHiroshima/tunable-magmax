@@ -342,7 +342,7 @@ def parse_arguments(argv=None):
             "mmd_embedded",
             "ot_embedded",
         ],
-        help="Similarity metric to use for masked_magmax_with_targetdata merging.",
+        help="Similarity metric the preference vector of the *_with_targetdata merges is inferred with (vision).",
     )
     parser.add_argument(
         "--logger_mode",

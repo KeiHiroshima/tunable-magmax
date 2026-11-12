@@ -30,7 +30,12 @@ CLI_DOCUMENTED_MERGE_FNS = {
     "average",
     "random_mix",
     "masked_magmax_with_targetdata",
+    "weighted_ties_with_targetdata",
 }
+
+# The preference-weighted merges: they take a target environment's preference
+# vector, so the plain task_vectors -> TaskVector path cannot run them.
+TARGET_DATA_MERGE_FNS = {"masked_magmax_with_targetdata", "weighted_ties_with_targetdata"}
 
 
 def test_registry_matches_the_documented_cli_surface():
@@ -52,16 +57,25 @@ def test_on_disk_names_are_the_cli_names():
     assert {spec.name for spec in MERGE_SPECS.values()} == CLI_DOCUMENTED_MERGE_FNS
 
 
-def test_only_the_target_data_merge_is_vision_only():
-    assert SUPPORTED_MERGE_FN_NAMES == CLI_DOCUMENTED_MERGE_FNS - {
-        "masked_magmax_with_targetdata"
-    }
-    assert MERGE_SPECS["masked_magmax_with_targetdata"].needs_target_data
-    assert not any(
-        spec.needs_target_data
-        for name, spec in MERGE_SPECS.items()
-        if name != "masked_magmax_with_targetdata"
-    )
+def test_only_the_target_data_merges_are_off_the_plain_path():
+    assert SUPPORTED_MERGE_FN_NAMES == CLI_DOCUMENTED_MERGE_FNS - TARGET_DATA_MERGE_FNS
+    assert {
+        name for name, spec in MERGE_SPECS.items() if spec.needs_target_data
+    } == TARGET_DATA_MERGE_FNS
+
+
+def test_target_data_merges_follow_the_naming_convention():
+    """scripts/vision/*.sh and postprocessing/ recognise them by this suffix."""
+    for name, spec in MERGE_SPECS.items():
+        assert spec.needs_target_data == name.endswith("_with_targetdata")
+
+
+@pytest.mark.parametrize("name", sorted(TARGET_DATA_MERGE_FNS))
+def test_apply_merge_refuses_a_target_data_merge(name):
+    """Without a preference vector there is nothing to merge by; silently
+    falling through to "no merging" (fn is None) would be the wrong answer."""
+    with pytest.raises(TypeError):
+        apply_merge(get_merge_spec(name), build_synthetic_task_vectors())
 
 
 def test_finetune_resolves_to_the_last_task_vector():

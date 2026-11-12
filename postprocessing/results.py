@@ -41,7 +41,19 @@ COMPETITOR_ALL_DICT = {
     # vector is the target environment's own known ratio; see
     # src/nlp/target_data.py), so its competitor key has no "-<metric>" suffix.
     "masked_magmax_with_targetdata": "Tunable MAGMAX",
+    # Tunable TIES: TIES-Merging weighted by the same preference vector.
+    # Appended after Tunable MAGMAX so the existing plot colors are unchanged.
+    "weighted_ties_with_targetdata-labels": "Tunable TIES (Labels)",
+    "weighted_ties_with_targetdata-cosine_embedded": "Tunable TIES (Cosine)",
+    "weighted_ties_with_targetdata-ot_embedded": "Tunable TIES (OT)",
+    "weighted_ties_with_targetdata-mmd_embedded": "Tunable TIES (MMD)",
+    "weighted_ties_with_targetdata": "Tunable TIES",
 }
+
+# The --merge_fn values of the preference-weighted merges (MergeSpec.weighted_fn
+# in src/merging/registry.py) all end in this; only they have a
+# similarity_metric, and their results sit one directory deeper, under it.
+TARGET_DATA_SUFFIX = "_with_targetdata"
 
 # ---------------------------------------------------------------------------
 # Vision key / path utilities
@@ -72,7 +84,7 @@ def parse_competitor_key(key: str) -> tuple[str, str, str | None, str]:
         -> ("magmax", "", None, "")
     """
     head, _, last = key.rpartition("-")
-    if "masked_magmax_with_targetdata" in key and last in SIMILARITY_METRICS:
+    if TARGET_DATA_SUFFIX in key and last in SIMILARITY_METRICS:
         merge_fn = head
         metric_name = last
         similarity_metric = f"{metric_name}_"
@@ -116,7 +128,7 @@ def resolve_dir_path(
     if dir_name is not None:
         return dir_path_shared.replace(
             "DIR_NAME",
-            dir_name["proposed"] if "masked" in key else dir_name["other"],
+            dir_name["proposed"] if TARGET_DATA_SUFFIX in key else dir_name["other"],
         )
     return dir_path_shared
 
