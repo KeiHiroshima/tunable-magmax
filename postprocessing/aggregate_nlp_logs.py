@@ -22,6 +22,8 @@ not enter "Average").
 
     uv run python postprocessing/aggregate_nlp_logs.py
     uv run python postprocessing/aggregate_nlp_logs.py --root logs/nlp --out logs/nlp/summary.csv
+    uv run python postprocessing/aggregate_nlp_logs.py \
+        --methods finetune,ties,magmax,masked_magmax_with_targetdata,weighted_ties_with_targetdata
 """
 
 import argparse
@@ -49,7 +51,14 @@ ALL_TASKS = "All tasks"
 
 
 def _competitors(args) -> dict[str, str]:
-    return with_merge_space(NLP_COMPETITORS, args.merge_space)
+    competitors = NLP_COMPETITORS
+    if args.methods:
+        keys = args.methods.split(",")
+        unknown = [k for k in keys if k not in NLP_COMPETITORS]
+        if unknown:
+            raise SystemExit(f"unknown --methods {unknown}; choose from {list(NLP_COMPETITORS)}")
+        competitors = {k: NLP_COMPETITORS[k] for k in keys}
+    return with_merge_space(competitors, args.merge_space)
 
 
 def _parse_args():
@@ -62,6 +71,15 @@ def _parse_args():
         default="full",
         choices=["full", "core", "both"],
         help="report the --merge_space core results (<merge_fn>-core) instead of, or beside, the full ones",
+    )
+    p.add_argument(
+        "--methods",
+        help="comma-separated merge_fn values to report, in this order (default: every method); "
+        "runs merged with only some methods (e.g. lora-reuse) need this",
+    )
+    p.add_argument(
+        "--scopes",
+        help="comma-separated settings to report, e.g. LSB,LSB-lora,LSB-lora-reuse (default: every one found)",
     )
     p.add_argument("--digits", type=int, default=2, help="decimal places, accuracies in %%")
     p.add_argument("--out", help="save every cell as a long-form CSV (setting, order, method, column, mean, std, n_seeds)")
@@ -145,6 +163,9 @@ def main():
     target_ids = [tid for _, _, tids in columns for tid in tids]
 
     runs = discover_runs(root)
+    if args.scopes:
+        scopes = args.scopes.split(",")
+        runs = {k: v for k, v in runs.items() if k[1] in scopes}
     if not runs:
         raise SystemExit(f"no ft-pattern_* run directories under {root}")
 
