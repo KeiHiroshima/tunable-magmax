@@ -5,7 +5,7 @@ TIES-Merging に Tunable MAGMAX と同じ選好ベクトルを入れた **Tunabl
 - ブランチ：`exp/tunable-ties`
 - 結果の JSON：`logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing{,-lora-reuse}/CIFAR100-{5,20,50}/taskseq_A/{ties,weighted_ties_with_targetdata}/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
 - 実行の記録：`logs/vision_tunable_ties_experiment/`（`run_info.txt` にコミット・設定・環境、`code_*.diff` に実行時の未コミットの差分）
-- NLP（StdCL / LSB）でも動くように実装し、テストも書いたが、このマシンにはデータとチェックポイントがないので実験はしていない。
+- NLP（LSB）での結果は [nlp_tunable_ties_report.md](nlp_tunable_ties_report.md)、vision と NLP をまとめた結果は [tunable_ties_report.md](tunable_ties_report.md) にある。
 
 ## 1. 手法
 
@@ -198,7 +198,7 @@ Baseline の数値は [vision_lora_reuse_report.md](vision_lora_reuse_report.md)
 
 主張を一般化するには、次の検証が足りない。
 
-- **NLP**：StdCL / LSB でも動くように実装したが、このマシンでは実験していない。
+- **NLP**：LSB で実験した（[nlp_tunable_ties_report.md](nlp_tunable_ties_report.md)）。改善は vision より小さく、安定しなかった。
 - **Tunable MAGMAX との差の理由**：重み付き平均による値の縮み、上位 20% の trim、符号の選出のどれが効いているかは調べていない。trim の割合（top-k）は 20% の 1 通りだけで試した。
 - **OT が LoRA reuse の T = 50 で効かない理由**：OT の選好ベクトルは重みが 0 にならないので、50 タスクすべてが符号の選出に加わる。これが原因かどうかは調べていない。
 - **ターゲット側の情報の公平さ**：Tunable TIES はターゲット環境の情報を使うが、TIES は使わない。同じ情報を使う単純な対照手法（例：ターゲットのタスク比率で重み付けした平均）がまだない。
