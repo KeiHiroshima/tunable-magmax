@@ -77,6 +77,10 @@ def _parse_args():
         help="comma-separated merge_fn values to report, in this order (default: every method); "
         "runs merged with only some methods (e.g. lora-reuse) need this",
     )
+    p.add_argument(
+        "--scopes",
+        help="comma-separated settings to report, e.g. LSB,LSB-lora,LSB-lora-reuse (default: every one found)",
+    )
     p.add_argument("--digits", type=int, default=2, help="decimal places, accuracies in %%")
     p.add_argument("--out", help="save every cell as a long-form CSV (setting, order, method, column, mean, std, n_seeds)")
     return p.parse_args()
@@ -159,6 +163,9 @@ def main():
     target_ids = [tid for _, _, tids in columns for tid in tids]
 
     runs = discover_runs(root)
+    if args.scopes:
+        scopes = args.scopes.split(",")
+        runs = {k: v for k, v in runs.items() if k[1] in scopes}
     if not runs:
         raise SystemExit(f"no ft-pattern_* run directories under {root}")
 

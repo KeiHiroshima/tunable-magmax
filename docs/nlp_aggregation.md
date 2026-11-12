@@ -52,9 +52,10 @@ uv run python postprocessing/aggregate_nlp_logs.py --out logs/nlp/summary.csv
 # 全タスクを均等に混ぜた環境の列も表に加える
 uv run python postprocessing/aggregate_nlp_logs.py --include_all_tasks
 
-# 手法を絞る（一部の手法でしかマージしていない run、たとえば LoRA reuse を含むとき）
+# 手法と設定を絞る（一部の手法でしかマージしていない run、たとえば LoRA reuse を含むとき）
 uv run python postprocessing/aggregate_nlp_logs.py \
-    --methods finetune,ties,magmax,masked_magmax_with_targetdata,weighted_ties_with_targetdata
+    --methods finetune,ties,magmax,masked_magmax_with_targetdata,weighted_ties_with_targetdata \
+    --scopes LSB,LSB-lora,LSB-lora-reuse
 ```
 
 | 引数 | 既定値 | 意味 |
@@ -62,6 +63,7 @@ uv run python postprocessing/aggregate_nlp_logs.py \
 | `--root` | `logs/nlp` | 集計するディレクトリ |
 | `--target_config` | `target_data_config_lsb` | 列の定義に使う `configs/<name>.json`。マージ時の `--target_config` と同じものを指定する |
 | `--methods` | すべての手法 | 集計する手法（`--merge_fn` の値）をカンマ区切りで指定する。この順に表の行が並ぶ |
+| `--scopes` | 見つかったすべての設定 | 集計する設定（`LSB`、`LSB-lora`、`LSB-lora-reuse` など）をカンマ区切りで指定する。一部の手法しか終わっていない設定を外すときに使う |
 | `--include_all_tasks` | なし | 全タスク均等の環境（LSB 設定ファイルの target 26）を `All tasks` 列として加える。`Average` 列の計算には含めない |
 | `--digits` | 2 | 小数点以下の桁数（精度は % で表示） |
 | `--out` | なし | 全セルを CSV に保存するパス |
