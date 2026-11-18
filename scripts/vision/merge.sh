@@ -19,8 +19,8 @@ task_seq=${task_seq:-A}
 seed=${seed:-3}                 # 3 4 5
 gpu_id=${gpu_id:-0}
 num_train_data_each_task=${num_train_data_each_task:-500}
-merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune magmax ties average random_mix masked_magmax_with_targetdata
-similarity_metric=${similarity_metric:-labels}       # labels ot_embedded cosine_embedded mmd_embedded (masked_magmax_with_targetdata only)
+merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune magmax ties average random_mix masked_magmax_with_targetdata weighted_ties_with_targetdata
+similarity_metric=${similarity_metric:-labels}       # labels ot_embedded cosine_embedded mmd_embedded (*_with_targetdata only)
 target_config=${target_config:-target_data_config}   # target_data_config target_data_config_split{5,20,50}
 # full: train every image-tower parameter. lora: train a LoRA adapter per
 # split (src/lora.py, lr 1e-3); its logs go under a -lora dir_name so they
@@ -61,7 +61,7 @@ method_tag=${merge_fn}
 if [ "${merge_space}" != "full" ]; then
     method_tag=${method_tag}-${merge_space}
 fi
-if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
+if [[ "${merge_fn}" == *_with_targetdata ]]; then  # the preference-weighted merges
     similarity_args=(--similarity_metric ${similarity_metric})
     method_tag=${method_tag}-${similarity_metric}
 fi

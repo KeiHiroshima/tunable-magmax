@@ -103,8 +103,8 @@ def _parse_args():
 def _default_competitors(backend: str) -> dict[str, str]:
     if backend == "vision":
         return dict(COMPETITOR_ALL_DICT)
-    # StdCL/LSB have no similarity_metric variants of the proposed method — only the
-    # plain "masked_magmax_with_targetdata" key exists for it.
+    # StdCL/LSB have no similarity_metric variants of the preference-weighted
+    # merges — only their plain "<merge_fn>" keys exist.
     return {k: v for k, v in COMPETITOR_ALL_DICT.items() if "-" not in k}
 
 

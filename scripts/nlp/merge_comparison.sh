@@ -17,7 +17,7 @@
 #   model=t5-large dataset=LSB task_seq=4 seed=4 bash scripts/nlp/merge_comparison.sh
 #   merge_fns="magmax masked_magmax_with_targetdata" bash scripts/nlp/merge_comparison.sh
 
-merge_fns=${merge_fns:-"finetune random_mix average ties magmax masked_magmax_with_targetdata"}
+merge_fns=${merge_fns:-"finetune random_mix average ties magmax masked_magmax_with_targetdata weighted_ties_with_targetdata"}
 
 script_dir=$(dirname "$0")
 failed=()

@@ -63,7 +63,7 @@ log_dir=logs/${model}/sequential_finetuning/class_incremental/${merge_dir_name}/
 mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 
-if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
+if [[ "${merge_fn}" == *_with_targetdata ]]; then  # the preference-weighted merges
     similarity_metric=labels #labels ot_embedded cosine_embedded mmd_embedded
     uv run python merge_for_targetdata.py \
         --model ${model} \

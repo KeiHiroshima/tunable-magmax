@@ -15,7 +15,7 @@
 #       merge_fns="magmax masked_magmax_with_targetdata" \
 #       similarity_metrics="labels ot_embedded" bash scripts/vision/merge_comparison.sh
 
-merge_fns=${merge_fns:-"finetune random_mix average ties magmax masked_magmax_with_targetdata"}
+merge_fns=${merge_fns:-"finetune random_mix average ties magmax masked_magmax_with_targetdata weighted_ties_with_targetdata"}
 similarity_metrics=${similarity_metrics:-"labels ot_embedded"} # cosine_embedded mmd_embedded
 
 script_dir=$(dirname "$0")
@@ -28,7 +28,7 @@ run() {
 }
 
 for merge_fn in ${merge_fns}; do
-    if [ "${merge_fn}" = "masked_magmax_with_targetdata" ]; then
+    if [[ "${merge_fn}" == *_with_targetdata ]]; then  # one run per similarity metric
         for similarity_metric in ${similarity_metrics}; do
             run ${merge_fn} ${similarity_metric}
         done

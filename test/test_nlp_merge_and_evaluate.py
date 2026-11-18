@@ -13,6 +13,7 @@ a merge_fn that does not need target data is merged once and reused across
 every target environment rather than being recomputed per environment.
 """
 
+import dataclasses
 import json
 from argparse import Namespace
 
@@ -23,6 +24,7 @@ from transformers import AutoTokenizer, T5Config, T5ForConditionalGeneration
 
 from src.backends import nlp_classification_backend as backend
 from src.merging.registry import apply_merge
+from src.merging.registry import get_merge_spec as real_get_merge_spec
 from src.nlp.long_sequence_benchmark import Seq2SeqCollator, build_prompt
 from src.nlp.modeling_nlp import freeze_shared_embeddings
 from src.task_spec import TaskSpec
@@ -190,6 +192,35 @@ def test_proposed_method_uses_the_environments_ratio_as_its_preference_vector(tm
     assert saved["weights_each_task"] == [0.8, 0.2]
     assert "num_unaligned" in saved
     assert "num_params_all" in saved
+
+
+def test_tunable_ties_merges_by_the_environments_ratio(tmp_path, monkeypatch, tokenizer):
+    """Same flow as the proposed method, with TIES's weighted merge: the
+    preference vector is recorded, and there is no masked-MAGMAX bookkeeping."""
+    from src.merging.task_vectors import weighted_ties_by_weights
+
+    target_config = _write_target_config(
+        tmp_path, monkeypatch, num_task_to_be_fetched=2, ratios=[[0.8, 0.2]], target_ids=[1]
+    )
+    args = _setup(tmp_path, monkeypatch, tokenizer, "weighted_ties_with_targetdata", target_config)
+    calls = []
+
+    def _recording(task_vectors, weights, *, seed):
+        calls.append(weights)
+        return weighted_ties_by_weights(task_vectors, weights, seed=seed)
+
+    monkeypatch.setattr(
+        backend, "get_merge_spec",
+        lambda name: dataclasses.replace(real_get_merge_spec(name), weighted_fn=_recording),
+    )
+
+    results = backend.merge_and_evaluate(args)
+
+    assert calls == [[0.8, 0.2]]
+    saved = results[1]
+    assert saved["weights_each_task"] == [0.8, 0.2]
+    assert "num_unaligned" not in saved
+    assert "overall_accuracy" in saved
 
 
 def test_finished_environment_is_skipped_on_rerun(tmp_path, monkeypatch, tokenizer):

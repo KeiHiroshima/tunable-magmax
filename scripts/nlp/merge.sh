@@ -23,7 +23,7 @@ seed=${seed:-3}                     # 3 4 5
 epochs=${epochs:-1}
 gpu_id=${gpu_id:-0}
 num_target_data=${num_target_data:-200}
-merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune random_mix average ties magmax masked_magmax_with_targetdata
+merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune random_mix average ties magmax masked_magmax_with_targetdata weighted_ties_with_targetdata
 target_config=${target_config:-target_data_config_lsb}
 # Must match the fine-tuning run (scripts/nlp/finetune.sh picks it the same way).
 if [ "${model}" = "t5-large" ]; then
@@ -46,7 +46,7 @@ fi
 # results go under <merge_fn>-core so they never mix with the full ones.
 merge_space=${merge_space:-full}  # full core
 # 1: also score single-model merges on every task's whole test split
-# (O-LoRA's Average Accuracy). Ignored by masked_magmax_with_targetdata.
+# (O-LoRA's Average Accuracy). Ignored by the *_with_targetdata merges.
 eval_full_testsets=${eval_full_testsets:-1}
 full_flag=$([ "${eval_full_testsets}" = "1" ] && echo --eval_full_testsets || true)
 
