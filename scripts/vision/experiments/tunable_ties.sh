@@ -31,9 +31,10 @@ phases=(
     "small n_splits_list='20 5' heavy_jobs='full 20' heavy_workers=2"
     "large n_splits_list=50 gpu_ids=0"
 )
-# Results go under lora_reuse[-lora|-lora-reuse]. When this ran, the prefix
-# was "reproducing", the name the 2026-09 reproduction already used; those
-# results were renamed to lora_reuse* under logs/results/vision (logs/README.md).
+# Results go under lora_reuse/{full,lora-merge,lora-reuse}. When this ran,
+# they went to reproducing, reproducing-lora and reproducing-lora-reuse —
+# names the 2026-09 reproduction already used — and were renamed under
+# logs/results/vision afterwards (logs/README.md).
 export results_prefix=lora_reuse
 export ft_log_prefix=DEFAULT_NAME
 export log_dir=logs/runs/vision/tunable_ties
