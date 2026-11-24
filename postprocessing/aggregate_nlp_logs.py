@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Aggregate every StdCL/LSB result copied under logs/nlp into the paper's
+"""Aggregate every StdCL/LSB result copied under logs/results/nlp into the paper's
 Table 2 layout: one row per method, one column per target environment
 (D_tar,1..5, i.e. one mixing ratio of configs/target_data_config_lsb.json)
 plus "Average", each cell the mean +/- std over seeds.
@@ -21,7 +21,7 @@ the paper's columns; --include_all_tasks appends it after "Average" (it does
 not enter "Average").
 
     uv run python postprocessing/aggregate_nlp_logs.py
-    uv run python postprocessing/aggregate_nlp_logs.py --root logs/nlp --out logs/nlp/summary.csv
+    uv run python postprocessing/aggregate_nlp_logs.py --root logs/results/nlp --out logs/summaries/nlp/summary.csv
     uv run python postprocessing/aggregate_nlp_logs.py \
         --methods finetune,ties,magmax,masked_magmax_with_targetdata,weighted_ties_with_targetdata
 """
@@ -63,7 +63,7 @@ def _competitors(args) -> dict[str, str]:
 
 def _parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--root", default=str(REPO_ROOT / "logs" / "nlp"), help="the copied results tree")
+    p.add_argument("--root", default=str(REPO_ROOT / "logs" / "results" / "nlp"), help="the copied results tree")
     p.add_argument("--target_config", default="target_data_config_lsb", help="configs/<name>.json")
     p.add_argument("--include_all_tasks", action="store_true", help="also report the all-tasks environment")
     p.add_argument(

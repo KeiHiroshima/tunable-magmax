@@ -28,4 +28,4 @@ phases=(
     "existing variants='t5-base:full t5-large:lora' finetune=0 merge_fns=weighted_ties_with_targetdata"
     "reuse variants='t5-base:lora-reuse t5-large:lora-reuse' finetune=1 merge_fns='finetune ties magmax masked_magmax_with_targetdata weighted_ties_with_targetdata'"
 )
-export log_dir=logs/nlp_tunable_ties_experiment
+export log_dir=logs/runs/nlp/tunable_ties

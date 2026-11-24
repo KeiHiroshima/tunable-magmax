@@ -71,7 +71,7 @@ echo "Merging ${model} (${mode_tag}) for target data on ${dataset}-${n_splits} (
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
-log_dir=logs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
+log_dir=logs/results/vision/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
 mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 

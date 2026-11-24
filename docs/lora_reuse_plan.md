@@ -96,7 +96,7 @@ NLP の `finetune_task_sequence` は、今のテスト（`lora_run`）と同じ�
 | vision の学習ログ（[scripts/vision/finetune.sh](../scripts/vision/finetune.sh) の `dir_name`、`outs/` と `logs/` の両方） | `DEFAULT_NAME-lora` | `DEFAULT_NAME-lora-reuse` |
 | vision のマージのログ（`merge.sh` の `outs/`） | `reproducing-lora` | `reproducing-lora-reuse`（上の `dir_name` と共通） |
 | NLP の学習とマージのログ（`scripts/nlp/{finetune,merge}.sh` の `out_dir`） | `outs/{model}/nlp_classification/{dataset}-lora` | `outs/{model}/nlp_classification/{dataset}-lora-reuse` |
-| vision の一括実行（[scripts/vision/run_lora_sweep.sh](../scripts/vision/run_lora_sweep.sh) の `log_dir`） | `logs/vision_lora_sweep` | `logs/vision_lora_reuse_sweep` |
+| vision の一括実行（[scripts/vision/run_lora_sweep.sh](../scripts/vision/run_lora_sweep.sh) の `log_dir`） | `logs/runs/vision/lora_sweep` | `logs/runs/vision/lora_reuse_sweep` |
 | NLP の一括実行（`scripts/nlp/run_t5-base_lora_lsb_single_gpu.sh` のログのファイル名） | `{model}_{dataset}-lora_order{n}.log` | `{model}_{dataset}-lora-reuse_order{n}.log` |
 | wandb（vision の `finetune` と `merge_and_evaluate`） | 今のまま | run の名前の末尾に `-lora-reuse` を付け、タグに `lora-reuse` を足す |
 

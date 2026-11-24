@@ -8,8 +8,8 @@
 3 つの設定は、同じコード・同じ環境で、すべて学習からやり直した。
 
 - ブランチ：`exp/lora-single-adapter`
-- 結果の JSON：`logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing{,-lora-reuse,-lora}/CIFAR100-{5,20,50}/taskseq_A/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
-- 実行の記録：`logs/vision_lora_reuse_experiment/`（`run_info.txt` にコミット・設定・環境、`code_*.diff` に実行時の未コミットの差分）
+- 結果の JSON：`logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/lora_reuse{,-lora-reuse,-lora}/CIFAR100-{5,20,50}/taskseq_A/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
+- 実行の記録：`logs/runs/vision/lora_reuse/`（`run_info.txt` にコミット・設定・環境、`code_*.diff` に実行時の未コミットの差分）
 
 ## 1. 実験設定
 
@@ -21,7 +21,7 @@
 | 学習率 | 1e-5 | 1e-3 | 1e-3 |
 | オプティマイザ | AdamW、weight decay 0.1、cosine（warmup 0.1）。タスクごとに作り直す | 同じ | 同じ |
 | epoch / batch | 10 / 128 | 同じ | 同じ |
-| 結果の場所（`dir_name`） | `reproducing` | `reproducing-lora-reuse` | `reproducing-lora` |
+| 結果の場所（`dir_name`） | `lora_reuse`（実行時は `reproducing`） | `lora_reuse-lora-reuse`（同 `reproducing-lora-reuse`） | `lora_reuse-lora`（同 `reproducing-lora`） |
 
 共通の設定：
 

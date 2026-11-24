@@ -18,6 +18,9 @@ export similarity_metrics="labels ot_embedded"
 export target_config=target_data_config
 export gpu_ids="0 1 2"
 export cores_per_worker=8
-export results_prefix=reproducing
+# Results go under lora_reuse[-lora|-lora-reuse]. When this ran, the prefix
+# was "reproducing", the name the 2026-09 reproduction already used; those
+# results were renamed to lora_reuse* under logs/results/vision (logs/README.md).
+export results_prefix=lora_reuse
 export ft_log_prefix=DEFAULT_NAME
-export log_dir=logs/vision_lora_reuse_experiment
+export log_dir=logs/runs/vision/lora_reuse

@@ -9,9 +9,9 @@
 # are skipped (scripts/nlp/run_parallel_experiment.sh).
 #
 #   bash scripts/nlp/launch_experiment.sh tunable_ties
-#   tail -f logs/nlp_tunable_ties_experiment/runner.log    # progress
-#   cat logs/nlp_tunable_ties_experiment/status.*          # finished jobs
-#   kill -- -$(cat logs/nlp_tunable_ties_experiment/runner.pid)   # stop everything
+#   tail -f logs/runs/nlp/tunable_ties/runner.log    # progress
+#   cat logs/runs/nlp/tunable_ties/status.*          # finished jobs
+#   kill -- -$(cat logs/runs/nlp/tunable_ties/runner.pid)   # stop everything
 #
 # An experiment whose settings define `phases` runs in that many steps, one
 # after another: each entry is "<name> VAR=value ...", overriding the

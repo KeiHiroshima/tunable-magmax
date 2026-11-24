@@ -27,7 +27,9 @@ share/python-wheels/
 .installed.cfg
 *.eggcheckpoints/
 out/
-logs/
+# Results and run logs stay local; only the index of what is where is tracked.
+logs/*
+!logs/README.md
 to be replaced
 .vscode/
 

@@ -3,8 +3,8 @@
 TIES-Merging に Tunable MAGMAX と同じ選好ベクトルを入れた **Tunable TIES**（`--merge_fn weighted_ties_with_targetdata`）を実装し、通常の TIES と比べた。MAGMAX と Tunable MAGMAX は参考として並べる。
 
 - ブランチ：`exp/tunable-ties`
-- 結果の JSON：`logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing{,-lora-reuse}/CIFAR100-{5,20,50}/taskseq_A/{ties,weighted_ties_with_targetdata}/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
-- 実行の記録：`logs/vision_tunable_ties_experiment/`（`run_info.txt` にコミット・設定・環境、`code_*.diff` に実行時の未コミットの差分）
+- 結果の JSON：`logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/lora_reuse{,-lora-reuse}/CIFAR100-{5,20,50}/taskseq_A/{ties,weighted_ties_with_targetdata}/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
+- 実行の記録：`logs/runs/vision/tunable_ties/`（`run_info.txt` にコミット・設定・環境、`code_*.diff` に実行時の未コミットの差分）
 - NLP（LSB）での結果は [nlp_tunable_ties_report.md](nlp_tunable_ties_report.md)、vision と NLP をまとめた結果は [tunable_ties_report.md](tunable_ties_report.md) にある。
 
 ## 1. 手法
@@ -35,7 +35,7 @@ TIES-Merging に Tunable MAGMAX と同じ選好ベクトルを入れた **Tunabl
 
 [vision_lora_reuse_report.md](vision_lora_reuse_report.md) で学習したチェックポイントをそのまま使い、マージと評価だけを追加で行った。
 
-- 学習の設定は 2 つ：**全パラメータ学習**（`reproducing`）と **LoRA reuse**（`reproducing-lora-reuse`。1 つの LoRA を全タスクで学習し続ける）。
+- 学習の設定は 2 つ：**全パラメータ学習**（`lora_reuse`。実行時の名前は `reproducing`）と **LoRA reuse**（`lora_reuse-lora-reuse`。同 `reproducing-lora-reuse`。1 つの LoRA を全タスクで学習し続ける）。
 - データは CIFAR-100、T ∈ {5, 20, 50}、タスク順序 A、seed は 3 / 4 / 5。
 - マージは λ = 0.5。Tunable TIES の選好ベクトルは OT（`ot_embedded`）と Label（`labels`）の 2 通り。
 - ターゲット環境は `configs/target_data_config.json`。T=5、20 は 26 環境、T=50 は 25 環境。

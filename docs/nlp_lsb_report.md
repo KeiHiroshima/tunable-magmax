@@ -5,7 +5,7 @@ NLP の継続学習ベンチマーク LSB（Long Sequence Benchmark、15 タス�
 - モデル：t5-base（全パラメータ学習）、t5-base（LoRA [9]）、t5-large（LoRA）
 - 実行と集計の手順：[nlp_pipeline.md](nlp_pipeline.md)、[nlp_aggregation.md](nlp_aggregation.md)
 - StdCL との比較と、傾向の違いの考察：[nlp_results_report.md](nlp_results_report.md)
-- 結果の JSON：`logs/nlp/t5-base/LSB/`、`logs/nlp/t5-base/LSB-lora/`、`logs/nlp/t5-large/LSB-lora/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
+- 結果の JSON：`logs/results/nlp/t5-base/LSB/`、`logs/results/nlp/t5-base/LSB-lora/`、`logs/results/nlp/t5-large/LSB-lora/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
 - 文献番号 [n] は末尾の[参考文献](#参考文献)を指す。
 
 ## 1. 実験設定

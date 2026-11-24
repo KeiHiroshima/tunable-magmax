@@ -2,10 +2,10 @@
 # Run the missing t5-base x LSB experiments: fine-tune every order x seed
 # (scripts/nlp/finetune_all.sh), then run the method comparison on them
 # (scripts/nlp/merge_comparison_all.sh). This is the same sweep that produced
-# logs/nlp_sweep/{t5-base_StdCL,t5-large_LSB,t5-large_StdCL}.log.
+# logs/runs/nlp/sweep/{t5-base_StdCL,t5-large_LSB,t5-large_StdCL}.log.
 #
 # The orders (4 5 6) run in parallel, one GPU each: order i goes to the i-th
-# entry of gpu_ids. Each order writes its own log under logs/nlp_sweep/.
+# entry of gpu_ids. Each order writes its own log under logs/runs/nlp/sweep/.
 # A failing order does not stop the others — the failures are listed at the
 # end and the exit status is non-zero. Finished tasks / target environments are
 # skipped inside the Python scripts, so re-running resumes the sweep.
@@ -29,7 +29,7 @@ if [ ${#order_arr[@]} -gt ${#gpu_arr[@]} ]; then
 fi
 
 script_dir=$(dirname "$0")
-log_dir=logs/nlp_sweep
+log_dir=logs/runs/nlp/sweep
 mkdir -p ${log_dir}
 
 pids=()

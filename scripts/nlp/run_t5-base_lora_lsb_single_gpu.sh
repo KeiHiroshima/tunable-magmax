@@ -9,7 +9,7 @@
 # running process gets every core (threads, below). Three processes on one
 # 16GB GPU would leave little room for evaluation (~5GB each while training),
 # and parallel processes would compete for the cores the masked merge needs.
-# Each order writes its own log under logs/nlp_sweep/.
+# Each order writes its own log under logs/runs/nlp/sweep/.
 #
 # A failing order does not stop the others — the failures are listed at the
 # end and the exit status is non-zero. Finished tasks / target environments are
@@ -43,7 +43,7 @@ export OMP_NUM_THREADS=${threads} MKL_NUM_THREADS=${threads}
 orders=${orders:-"4 5 6"}
 
 script_dir=$(dirname "$0")
-log_dir=logs/nlp_sweep
+log_dir=logs/runs/nlp/sweep
 mkdir -p ${log_dir}
 
 failed=()

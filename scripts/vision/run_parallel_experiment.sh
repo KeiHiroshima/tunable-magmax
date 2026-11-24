@@ -5,9 +5,9 @@
 # scripts/vision/launch_experiment.sh.
 #
 #   variant    what is trained                             results (dir_name)
-#   full       every image-tower parameter                 reproducing
-#   lora-reuse one LoRA adapter across every split         reproducing-lora-reuse
-#   lora       a LoRA adapter per split, merged in (O-LoRA) reproducing-lora
+#   full       every image-tower parameter                 {results_prefix}
+#   lora-reuse one LoRA adapter across every split         {results_prefix}-lora-reuse
+#   lora       a LoRA adapter per split, merged in (O-LoRA) {results_prefix}-lora
 #
 # Every job fine-tunes (scripts/vision/finetune.sh) and then merges
 # (scripts/vision/merge_comparison.sh) with merge_fns. Finished splits are
@@ -48,11 +48,13 @@ export merge_fns=${merge_fns:-"finetune magmax masked_magmax_with_targetdata"}
 export similarity_metrics=${similarity_metrics:-"labels ot_embedded"}
 export dataset=${dataset:-CIFAR100}
 export epochs=${epochs:-10}
-log_dir=${log_dir:-logs/vision_lora_reuse_experiment}
+log_dir=${log_dir:-logs/runs/vision/lora_reuse}
 # Prefixes of the results (merge.sh) and fine-tuning log (finetune.sh)
 # directories; the variant's suffix is appended. Change them for a trial run:
 # the results directory does not encode epochs, so a trial's result JSONs left
-# under "reproducing-*" would make the real run skip those evaluations.
+# under "<prefix>-*" would make the real run skip those evaluations. Name it
+# after the experiment: two experiments sharing a prefix overwrite each
+# other's results (logs/README.md).
 results_prefix=${results_prefix:-reproducing}
 ft_log_prefix=${ft_log_prefix:-DEFAULT_NAME}
 dry_run=${dry_run:-0}

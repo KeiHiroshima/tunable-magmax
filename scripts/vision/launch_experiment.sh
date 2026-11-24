@@ -8,9 +8,9 @@
 # are skipped (scripts/vision/run_parallel_experiment.sh).
 #
 #   bash scripts/vision/launch_experiment.sh tunable_ties
-#   tail -f logs/vision_tunable_ties_experiment/runner.log    # progress
-#   cat logs/vision_tunable_ties_experiment/status            # finished jobs
-#   kill -- -$(cat logs/vision_tunable_ties_experiment/runner.pid)   # stop everything
+#   tail -f logs/runs/vision/tunable_ties/runner.log    # progress
+#   cat logs/runs/vision/tunable_ties/status            # finished jobs
+#   kill -- -$(cat logs/runs/vision/tunable_ties/runner.pid)   # stop everything
 #
 # An experiment whose settings define `phases` runs in that many steps, one
 # after another: each entry is "<name> VAR=value ...", overriding the

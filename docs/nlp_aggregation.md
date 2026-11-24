@@ -7,18 +7,18 @@
 
 | | [build_comparison_table.py](../postprocessing/build_comparison_table.py) | [aggregate_nlp_logs.py](../postprocessing/aggregate_nlp_logs.py) |
 |---|---|---|
-| 読み込む場所 | チェックポイントの横にある結果（`$MAGMAX_BASE_DIR/checkpoints/...`） | `logs/nlp/` にコピーした結果 |
-| 1回の実行で集計する範囲 | 指定した model・dataset・Order の1組 | `logs/nlp/` で見つかったすべての model・設定・Order |
+| 読み込む場所 | チェックポイントの横にある結果（`$MAGMAX_BASE_DIR/checkpoints/...`） | `logs/results/nlp/` にコピーした結果 |
+| 1回の実行で集計する範囲 | 指定した model・dataset・Order の1組 | `logs/results/nlp/` で見つかったすべての model・設定・Order |
 | Order をまとめた表 | なし | あり（Order ごとの表に加えて、設定ごとに全 Order をまとめた表も出す） |
 
 複数のマシンで学習した結果を1か所に集めて比べたいときは、aggregate_nlp_logs.py を使う。
 
-## 1. 結果の JSON を `logs/nlp/` にコピーする
+## 1. 結果の JSON を `logs/results/nlp/` にコピーする
 
 スクリプトは次の構成のディレクトリを読む（`logs/` は `.gitignore` の対象なので、コミットされない）。
 
 ```
-logs/nlp/{model}/{scope}/ft-pattern_{order}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
+logs/results/nlp/{model}/{scope}/ft-pattern_{order}-epochs-{e}-seed:{s}/{merge_fn}/target{id}_seed{s}.json
 ```
 
 - `scope` は `StdCL` / `LSB`（full）、または `StdCL-lora` / `LSB-lora`（LoRA）。
@@ -28,17 +28,17 @@ logs/nlp/{model}/{scope}/ft-pattern_{order}-epochs-{e}-seed:{s}/{merge_fn}/targe
 # 例：このマシンの t5-base の結果をコピーする
 rsync -a --include='*/' --include='*.json' --exclude='*' --prune-empty-dirs \
     /mnt/ssd/KeiHiroshima/tunable_magmax/checkpoints/t5-base/sequential_finetuning/nlp_classification/ \
-    logs/nlp/t5-base/
+    logs/results/nlp/t5-base/
 
 # 例：別のマシンにある t5-large の結果をコピーする
 rsync -a --include='*/' --include='*.json' --exclude='*' --prune-empty-dirs \
     <host>:/path/to/checkpoints/t5-large/sequential_finetuning/nlp_classification/ \
-    logs/nlp/t5-large/
+    logs/results/nlp/t5-large/
 ```
 
-`ft-pattern_*` に当てはまらないディレクトリは読み飛ばされる。たとえば `logs/nlp/stdout/` に `outs/` の `.out` ファイルを置いておいても集計には影響しない。
+`ft-pattern_*` に当てはまらないディレクトリは読み飛ばされる。`outs/` の `.out` ファイル（標準出力）は、結果とは分けて `logs/runs/nlp/stdout/` に置く（[logs/README.md](../logs/README.md)）。
 
-**注意**：スクリプトは、見つかった各 run について、すべての手法（finetune, random_mix, average, ties, magmax, masked_magmax_with_targetdata, weighted_ties_with_targetdata。`--methods` で絞れる）の、すべての target id の JSON を読む。途中までしか終わっていない run が1つでもあると、`FileNotFoundError` で止まる。その場合は、その run のディレクトリを `logs/nlp/` から外してから実行する。
+**注意**：スクリプトは、見つかった各 run について、すべての手法（finetune, random_mix, average, ties, magmax, masked_magmax_with_targetdata, weighted_ties_with_targetdata。`--methods` で絞れる）の、すべての target id の JSON を読む。途中までしか終わっていない run が1つでもあると、`FileNotFoundError` で止まる。その場合は、その run のディレクトリを `logs/results/nlp/` から外してから実行する。
 
 ## 2. 集計を実行する
 
@@ -47,7 +47,7 @@ rsync -a --include='*/' --include='*.json' --exclude='*' --prune-empty-dirs \
 uv run python postprocessing/aggregate_nlp_logs.py
 
 # 表に加えて、全セルを縦長の CSV に保存する
-uv run python postprocessing/aggregate_nlp_logs.py --out logs/nlp/summary.csv
+uv run python postprocessing/aggregate_nlp_logs.py --out logs/summaries/nlp/summary.csv
 
 # 全タスクを均等に混ぜた環境の列も表に加える
 uv run python postprocessing/aggregate_nlp_logs.py --include_all_tasks
@@ -60,7 +60,7 @@ uv run python postprocessing/aggregate_nlp_logs.py \
 
 | 引数 | 既定値 | 意味 |
 |---|---|---|
-| `--root` | `logs/nlp` | 集計するディレクトリ |
+| `--root` | `logs/results/nlp` | 集計するディレクトリ |
 | `--target_config` | `target_data_config_lsb` | 列の定義に使う `configs/<name>.json`。マージ時の `--target_config` と同じものを指定する |
 | `--methods` | すべての手法 | 集計する手法（`--merge_fn` の値）をカンマ区切りで指定する。この順に表の行が並ぶ |
 | `--scopes` | 見つかったすべての設定 | 集計する設定（`LSB`、`LSB-lora`、`LSB-lora-reuse` など）をカンマ区切りで指定する。一部の手法しか終わっていない設定を外すときに使う |

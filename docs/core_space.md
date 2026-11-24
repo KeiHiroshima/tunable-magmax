@@ -92,7 +92,7 @@ uv run python postprocessing/aggregate_nlp_logs.py --merge_space both
 # vision：ベースラインは full、提案手法だけ full と core の両方
 P=masked_magmax_with_targetdata
 uv run python postprocessing/build_comparison_table.py --backend vision \
-    --results_db logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-5/taskseq_A \
+    --results_db logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-5/taskseq_A \
     --target_config target_data_config --seeds 3,4,5 \
     --competitors finetune,random_mix,average,ties,magmax,$P-ot_embedded,$P-labels \
     --merge_space both --core_competitors $P-ot_embedded,$P-labels

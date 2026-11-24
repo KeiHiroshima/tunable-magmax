@@ -139,7 +139,7 @@ finetune_merge.sh ──> finetune_splitted.py の後に merge_for_targetdata.py
 
 ```bash
 uv run python postprocessing/build_comparison_table.py --backend vision \
-    --results_db logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing/CIFAR100-5/taskseq_A \
+    --results_db logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/reproducing/CIFAR100-5/taskseq_A \
     --target_config target_data_config --seeds 3,4,5 \
     --competitors finetune,random_mix,average,ties,magmax,masked_magmax_with_targetdata-labels
 ```
