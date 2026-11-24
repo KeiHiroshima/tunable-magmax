@@ -5,12 +5,12 @@
 # scripts/vision/launch_experiment.sh.
 #
 #   variant    what is trained                             results (dir_name)
-#   full       every image-tower parameter                 {results_prefix}/full
-#   lora-reuse one LoRA adapter across every split         {results_prefix}/lora-reuse
-#   lora       a LoRA adapter per split, merged in (O-LoRA) {results_prefix}/lora-merge
+#   full       every image-tower parameter                 full
+#   lora-reuse one LoRA adapter across every split         lora-reuse
+#   lora       a LoRA adapter per split, merged in (O-LoRA) lora-merge
 #
-# results_prefix is the experiment's name, so one experiment's results sit
-# in one directory with a subdirectory per training method (logs/README.md).
+# One results directory per training method (logs/README.md); a trial run
+# sets results_prefix to keep its results apart, under <prefix>/<method>.
 #
 # Every job fine-tunes (scripts/vision/finetune.sh) and then merges
 # (scripts/vision/merge_comparison.sh) with merge_fns. Finished splits are
@@ -37,9 +37,8 @@
 # it must hold checkpoints/ViT-B-16/zeroshot.pt (and the open_clip cache).
 #
 # Everything can be overridden from the environment, e.g.
-#   results_prefix=my_exp variants="lora-reuse" n_splits_list="5" seeds="3" \
-#       bash scripts/vision/run_parallel_experiment.sh
-#   results_prefix=my_exp dry_run=1 bash scripts/vision/run_parallel_experiment.sh   # print the plan only
+#   variants="lora-reuse" n_splits_list="5" seeds="3" bash scripts/vision/run_parallel_experiment.sh
+#   dry_run=1 bash scripts/vision/run_parallel_experiment.sh   # print the plan only
 
 set -u
 
@@ -53,15 +52,15 @@ export similarity_metrics=${similarity_metrics:-"labels ot_embedded"}
 export dataset=${dataset:-CIFAR100}
 export epochs=${epochs:-10}
 log_dir=${log_dir:-logs/runs/vision/lora_reuse}
-# results_prefix names the results directory (merge.sh): the experiment's
-# name, required so two experiments never share one and overwrite each
-# other's results (logs/README.md). Each variant's results go under
-# <prefix>/<method> (run_job below). Use a separate prefix for a trial run:
-# the results directory does not encode epochs, so a trial's result JSONs
-# left under the real prefix would make the real run skip those evaluations.
+# Results go to the training method's directory (full, lora-merge,
+# lora-reuse; run_job below). Set results_prefix for a trial run, whose
+# results then go under <prefix>/<method>: the results directory does not
+# encode epochs, so a trial's result JSONs left in the method's directory
+# would make the real run skip those evaluations. Before training a method
+# again, move its earlier results to logs/legacy (logs/README.md).
 # ft_log_prefix names the fine-tuning log directory (finetune.sh), with the
 # variant's -lora / -lora-reuse suffix appended as before.
-results_prefix=${results_prefix:?set results_prefix to the experiment name (logs/results/vision/.../<results_prefix>/<method>)}
+results_prefix=${results_prefix:-}
 ft_log_prefix=${ft_log_prefix:-DEFAULT_NAME}
 dry_run=${dry_run:-0}
 heavy_jobs=${heavy_jobs:-}          # e.g. "full 50": job-line prefixes, separated by commas
@@ -129,7 +128,7 @@ echo "==========================================================================
 echo "${phase:+phase ${phase}: }MAGMAX_BASE_DIR=${MAGMAX_BASE_DIR}"
 echo "$(cat "${queue}" "${heavy_queue}" | wc -l) jobs on GPUs (${gpu_ids}), ${cores_per_worker} cores each; logs: ${log_dir}/"
 echo "merge_fns=(${merge_fns}) similarity_metrics=(${similarity_metrics}) epochs=${epochs}"
-echo "results: logs/results/vision/.../${results_prefix}/{full,lora-merge,lora-reuse}/, fine-tuning logs: .../${ft_log_prefix}[-lora|-lora-reuse]/"
+echo "results: logs/results/vision/.../${results_prefix:+${results_prefix}/}{full,lora-merge,lora-reuse}/, fine-tuning logs: .../${ft_log_prefix}[-lora|-lora-reuse]/"
 sed 's/^/  /' "${queue}"
 if [ -s "${heavy_queue}" ]; then
     echo "heavy (${heavy_jobs}), run by the first ${heavy_workers} worker(s) only:"
@@ -161,12 +160,11 @@ run_job() {
         lora-reuse) finetune_mode=lora; lora_chain=reuse; suffix=-lora-reuse; method=lora-reuse ;;
     esac
     # Fine-tuning logs: the names finetune.sh picks by default for each
-    # variant. Results: one directory per experiment, one subdirectory per
-    # training method.
+    # variant. Results: the training method's directory (merge.sh's default).
     finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
         dir_name=${ft_log_prefix}${suffix} bash "${script_dir}/finetune.sh" || return 1
     finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
-        dir_name=${results_prefix}/${method} gpu_id=0 bash "${script_dir}/merge_comparison.sh" || return 1
+        dir_name=${results_prefix:+${results_prefix}/}${method} gpu_id=0 bash "${script_dir}/merge_comparison.sh" || return 1
 }
 
 worker() {

@@ -19,7 +19,7 @@ Vision example (reproduces one of make_tables.ipynb's tables):
 
 Vision, every baseline in full space beside the proposed method's core runs:
     uv run python postprocessing/build_comparison_table.py --backend vision \\
-        --results_db logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-5/taskseq_A \\
+        --results_db logs/legacy/vision/ViT-B-16/sequential_finetuning/class_incremental/reproducing-lora/CIFAR100-5/taskseq_A \\
         --target_config target_data_config --seeds 3,4,5 \\
         --competitors finetune,random_mix,average,ties,magmax,masked_magmax_with_targetdata-ot_embedded,masked_magmax_with_targetdata-labels \\
         --merge_space both \\

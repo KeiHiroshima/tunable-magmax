@@ -18,10 +18,10 @@ export similarity_metrics="labels ot_embedded"
 export target_config=target_data_config
 export gpu_ids="0 1 2"
 export cores_per_worker=8
-# Results go under lora_reuse/{full,lora-merge,lora-reuse}. When this ran,
-# they went to reproducing, reproducing-lora and reproducing-lora-reuse —
-# names the 2026-09 reproduction already used — and were renamed under
-# logs/results/vision afterwards (logs/README.md).
-export results_prefix=lora_reuse
+# Results go to the training method's directory: full, lora-merge,
+# lora-reuse. When this ran, they went to reproducing, reproducing-lora and
+# reproducing-lora-reuse — names the 2026-09/10 runs already used — and were
+# renamed under logs/results/vision afterwards (logs/README.md).
+export results_prefix=
 export ft_log_prefix=DEFAULT_NAME
 export log_dir=logs/runs/vision/lora_reuse
