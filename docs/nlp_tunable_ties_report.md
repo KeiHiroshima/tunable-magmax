@@ -6,8 +6,8 @@ TIES-Merging に Tunable MAGMAX と同じ選好ベクトルを入れた **Tunabl
 - vision と NLP をまとめた結果：[tunable_ties_report.md](tunable_ties_report.md)
 - LSB の設定の詳細（タスク、Order、ターゲット環境）：[nlp_lsb_report.md](nlp_lsb_report.md) §1
 - ブランチ：`exp/tunable-ties-nlp`
-- 結果の JSON：`logs/nlp/{t5-base,t5-large}/{LSB,LSB-lora,LSB-lora-reuse}/`。全セルの集計は `logs/nlp/tunable_ties_lsb_summary.csv`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
-- 実行の記録：`logs/nlp_tunable_ties_experiment/`（`run_info.txt` にコミット・設定・環境、run ごとのログの末尾に所要時間とピークのメモリ）
+- 結果の JSON：`logs/results/nlp/{t5-base,t5-large}/{LSB,LSB-lora,LSB-lora-reuse}/`。全セルの集計は `logs/summaries/nlp/tunable_ties_lsb.csv`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
+- 実行の記録：`logs/runs/nlp/tunable_ties/`（`run_info.txt` にコミット・設定・環境、run ごとのログの末尾に所要時間とピークのメモリ）
 
 ## 1. 実験設定
 

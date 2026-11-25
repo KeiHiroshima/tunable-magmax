@@ -23,8 +23,10 @@ merge_fn=${merge_fn:-masked_magmax_with_targetdata}  # finetune magmax ties aver
 similarity_metric=${similarity_metric:-labels}       # labels ot_embedded cosine_embedded mmd_embedded (*_with_targetdata only)
 target_config=${target_config:-target_data_config}   # target_data_config target_data_config_split{5,20,50}
 # full: train every image-tower parameter. lora: train a LoRA adapter per
-# split (src/lora.py, lr 1e-3); its logs go under a -lora dir_name so they
-# never mix with a full run's.
+# split (src/lora.py, lr 1e-3).
+# Results go to the training method's directory under
+# logs/results/vision/.../class_incremental (logs/README.md): full,
+# lora-merge or lora-reuse, unless dir_name says otherwise.
 finetune_mode=${finetune_mode:-full}  # full lora
 # lora only. merge: an adapter per split, merged into the weights before the
 # next (O-LoRA eq. 9). reuse: one adapter trained across every split
@@ -37,10 +39,10 @@ if [ "${finetune_mode}" = "lora" ] && [ "${lora_chain}" = "reuse" ]; then
 else
     mode_tag=${finetune_mode}
 fi
-if [ "${finetune_mode}" = "lora" ]; then
-    dir_name=${dir_name:-reproducing-${mode_tag}}
+if [ "${mode_tag}" = "lora" ]; then
+    dir_name=${dir_name:-lora-merge}
 else
-    dir_name=${dir_name:-reproducing}
+    dir_name=${dir_name:-${mode_tag}}  # full, lora-reuse
 fi
 # full: merge in the adapted weights' own coordinates. core: rotate the LoRA
 # task vectors into Core Space first (src/merging/core_space.py; lora only);
@@ -71,7 +73,7 @@ echo "Merging ${model} (${mode_tag}) for target data on ${dataset}-${n_splits} (
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
-log_dir=logs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
+log_dir=logs/results/vision/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
 mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 

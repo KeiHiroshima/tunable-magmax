@@ -47,7 +47,7 @@ finetune=${finetune:-1}
 export merge_fns=${merge_fns:-"finetune ties magmax masked_magmax_with_targetdata weighted_ties_with_targetdata"}
 export target_config=${target_config:-target_data_config_lsb}
 export epochs=${epochs:-1}
-log_dir=${log_dir:-logs/nlp_parallel_experiment}
+log_dir=${log_dir:-logs/runs/nlp/parallel_experiment}
 dry_run=${dry_run:-0}
 # Names this run's queue and status files, so the phases of one experiment
 # (scripts/nlp/launch_experiment.sh) can share a log_dir.

@@ -28,7 +28,7 @@ echo "Finetuning ${model} on ${dataset}-${n_splits} (pattern: ${task_seq}) seed=
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${ft_dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
-log_dir=logs/${model}/sequential_finetuning/class_incremental/${ft_dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
+log_dir=logs/results/vision/${model}/sequential_finetuning/class_incremental/${ft_dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
 mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 
@@ -59,7 +59,7 @@ fi
 echo "num_target_data is set to ${num_target_data}"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${merge_dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
-log_dir=logs/${model}/sequential_finetuning/class_incremental/${merge_dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
+log_dir=logs/results/vision/${model}/sequential_finetuning/class_incremental/${merge_dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
 mkdir -p ${out_dir}
 mkdir -p ${log_dir}
 

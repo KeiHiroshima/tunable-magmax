@@ -29,7 +29,7 @@ dataset=CIFAR100 bash scripts/vision/finetune_all.sh
 dataset=CIFAR100 bash scripts/vision/merge_comparison_all.sh
 ```
 
-結果の JSON は `logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing/CIFAR100-{5,20,50}/taskseq_A/` に、チェックポイントは `$MAGMAX_BASE_DIR/checkpoints/ViT-B-16/sequential_finetuning/class_incremental/` にある。集計には [postprocessing/build_comparison_table.py](../postprocessing/build_comparison_table.py) を使った。集計方法は論文と同じで、各混合比について 5 variant の平均を seed ごとに取り、3 seed の平均 ± 標準偏差を出している。
+結果の JSON は `logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/reproducing/CIFAR100-{5,20,50}/taskseq_A/` に、チェックポイントは `$MAGMAX_BASE_DIR/checkpoints/ViT-B-16/sequential_finetuning/class_incremental/` にある。集計には [postprocessing/build_comparison_table.py](../postprocessing/build_comparison_table.py) を使った。集計方法は論文と同じで、各混合比について 5 variant の平均を seed ごとに取り、3 seed の平均 ± 標準偏差を出している。
 
 > 注：`configs/target_data_config.json` では (0.6, 0.2, 0.2) が 4 番目、(0.4, 0.4, 0.2) が 5 番目に並んでおり、論文の D4 / D5 とは順序が逆になっている。以下の表は論文の順序に並べ替えて載せている。
 

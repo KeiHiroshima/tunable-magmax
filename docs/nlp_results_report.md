@@ -3,7 +3,7 @@
 T5 による継続学習のテキスト分類（O-LoRA の StdCL / LSB）で、提案手法 Tunable MAGMAX（`masked_magmax_with_targetdata`）をベースラインと比べた結果をまとめる。あわせて、**StdCL では MAGMAX と同等以下、LSB では MAGMAX より良い**という傾向がなぜ生じるかを考察する。
 
 - 実行と集計の手順：[nlp_pipeline.md](nlp_pipeline.md)、[nlp_aggregation.md](nlp_aggregation.md)
-- 結果の JSON とログ：`logs/nlp/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
+- 結果の JSON とログ：`logs/results/nlp/`（`logs/` は `.gitignore` の対象なので、このリポジトリには入っていない）
 
 ## 1. 実験設定
 

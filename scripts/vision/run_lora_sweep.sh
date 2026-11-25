@@ -7,8 +7,8 @@
 # Fine-tuning uses every visible GPU (DataParallel), so the runs go one after
 # another. Merging uses one GPU per process, so each n_splits merges in
 # parallel on its own GPU: the i-th entry of n_splits_list goes to the i-th
-# entry of gpu_ids. Logs go to logs/vision_lora_sweep/
-# (logs/vision_lora_reuse_sweep/ under lora_chain=reuse).
+# entry of gpu_ids. Logs go to logs/runs/vision/lora_sweep/
+# (logs/runs/vision/lora_reuse_sweep/ under lora_chain=reuse).
 #
 # A failing step does not stop the others — failures are listed at the end and
 # the exit status is non-zero. Finished splits / target environments are
@@ -49,9 +49,9 @@ fi
 
 script_dir=$(dirname "$0")
 if [ "${lora_chain}" = "reuse" ]; then
-    log_dir=logs/vision_lora_reuse_sweep
+    log_dir=logs/runs/vision/lora_reuse_sweep
 else
-    log_dir=logs/vision_lora_sweep
+    log_dir=logs/runs/vision/lora_sweep
 fi
 mkdir -p ${log_dir}
 failed=()

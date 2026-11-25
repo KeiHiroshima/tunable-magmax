@@ -39,9 +39,9 @@ finetune_merge.sh ──> finetune_splitted.py の後に merge_for_targetdata.py
 ログの出力先は次の2つ。
 
 - 標準出力：`outs/{model}/sequential_finetuning/class_incremental/{dir_name}/{dataset}-{n_splits}/taskseq_{p}/`
-- 結果の JSON：`logs/…`（同じ構成、`--results_db` として渡す）
+- 結果の JSON：`logs/results/vision/…`（同じ構成、`--results_db` として渡す）
 
-`dir_name` は `finetune.sh` では `DEFAULT_NAME`、`merge.sh` では `reproducing` が既定値。これが影響するのはログの置き場所だけで、チェックポイントの場所は変わらない。
+`dir_name` は `finetune.sh` では `DEFAULT_NAME`、`merge.sh` では学習の方式の名前（`full`、`lora-merge`、`lora-reuse`）が既定値（[logs/README.md](../logs/README.md)）。これが影響するのはログの置き場所だけで、チェックポイントの場所は変わらない。
 
 ## 1. Python 側の入口（学習・マージ共通）
 
@@ -139,7 +139,7 @@ finetune_merge.sh ──> finetune_splitted.py の後に merge_for_targetdata.py
 
 ```bash
 uv run python postprocessing/build_comparison_table.py --backend vision \
-    --results_db logs/ViT-B-16/sequential_finetuning/class_incremental/reproducing/CIFAR100-5/taskseq_A \
+    --results_db logs/results/vision/ViT-B-16/sequential_finetuning/class_incremental/reproducing/CIFAR100-5/taskseq_A \
     --target_config target_data_config --seeds 3,4,5 \
     --competitors finetune,random_mix,average,ties,magmax,masked_magmax_with_targetdata-labels
 ```

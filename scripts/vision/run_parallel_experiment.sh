@@ -5,9 +5,12 @@
 # scripts/vision/launch_experiment.sh.
 #
 #   variant    what is trained                             results (dir_name)
-#   full       every image-tower parameter                 reproducing
-#   lora-reuse one LoRA adapter across every split         reproducing-lora-reuse
-#   lora       a LoRA adapter per split, merged in (O-LoRA) reproducing-lora
+#   full       every image-tower parameter                 full
+#   lora-reuse one LoRA adapter across every split         lora-reuse
+#   lora       a LoRA adapter per split, merged in (O-LoRA) lora-merge
+#
+# One results directory per training method (logs/README.md); a trial run
+# sets results_prefix to keep its results apart, under <prefix>/<method>.
 #
 # Every job fine-tunes (scripts/vision/finetune.sh) and then merges
 # (scripts/vision/merge_comparison.sh) with merge_fns. Finished splits are
@@ -48,12 +51,16 @@ export merge_fns=${merge_fns:-"finetune magmax masked_magmax_with_targetdata"}
 export similarity_metrics=${similarity_metrics:-"labels ot_embedded"}
 export dataset=${dataset:-CIFAR100}
 export epochs=${epochs:-10}
-log_dir=${log_dir:-logs/vision_lora_reuse_experiment}
-# Prefixes of the results (merge.sh) and fine-tuning log (finetune.sh)
-# directories; the variant's suffix is appended. Change them for a trial run:
-# the results directory does not encode epochs, so a trial's result JSONs left
-# under "reproducing-*" would make the real run skip those evaluations.
-results_prefix=${results_prefix:-reproducing}
+log_dir=${log_dir:-logs/runs/vision/lora_reuse}
+# Results go to the training method's directory (full, lora-merge,
+# lora-reuse; run_job below). Set results_prefix for a trial run, whose
+# results then go under <prefix>/<method>: the results directory does not
+# encode epochs, so a trial's result JSONs left in the method's directory
+# would make the real run skip those evaluations. Before training a method
+# again, move its earlier results to logs/legacy (logs/README.md).
+# ft_log_prefix names the fine-tuning log directory (finetune.sh), with the
+# variant's -lora / -lora-reuse suffix appended as before.
+results_prefix=${results_prefix:-}
 ft_log_prefix=${ft_log_prefix:-DEFAULT_NAME}
 dry_run=${dry_run:-0}
 heavy_jobs=${heavy_jobs:-}          # e.g. "full 50": job-line prefixes, separated by commas
@@ -121,7 +128,7 @@ echo "==========================================================================
 echo "${phase:+phase ${phase}: }MAGMAX_BASE_DIR=${MAGMAX_BASE_DIR}"
 echo "$(cat "${queue}" "${heavy_queue}" | wc -l) jobs on GPUs (${gpu_ids}), ${cores_per_worker} cores each; logs: ${log_dir}/"
 echo "merge_fns=(${merge_fns}) similarity_metrics=(${similarity_metrics}) epochs=${epochs}"
-echo "results: logs/.../${results_prefix}[-lora|-lora-reuse]/, fine-tuning logs: .../${ft_log_prefix}[-lora|-lora-reuse]/"
+echo "results: logs/results/vision/.../${results_prefix:+${results_prefix}/}{full,lora-merge,lora-reuse}/, fine-tuning logs: .../${ft_log_prefix}[-lora|-lora-reuse]/"
 sed 's/^/  /' "${queue}"
 if [ -s "${heavy_queue}" ]; then
     echo "heavy (${heavy_jobs}), run by the first ${heavy_workers} worker(s) only:"
@@ -146,17 +153,18 @@ pop_job() {
 
 run_job() {
     local variant=$1 n_splits=$2 seed=$3
-    local finetune_mode lora_chain suffix
+    local finetune_mode lora_chain suffix method
     case ${variant} in
-        full)       finetune_mode=full; lora_chain=merge; suffix="" ;;
-        lora)       finetune_mode=lora; lora_chain=merge; suffix=-lora ;;
-        lora-reuse) finetune_mode=lora; lora_chain=reuse; suffix=-lora-reuse ;;
+        full)       finetune_mode=full; lora_chain=merge; suffix="";          method=full ;;
+        lora)       finetune_mode=lora; lora_chain=merge; suffix=-lora;       method=lora-merge ;;
+        lora-reuse) finetune_mode=lora; lora_chain=reuse; suffix=-lora-reuse; method=lora-reuse ;;
     esac
-    # The same names finetune.sh / merge.sh pick by default for each variant.
+    # Fine-tuning logs: the names finetune.sh picks by default for each
+    # variant. Results: the training method's directory (merge.sh's default).
     finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
         dir_name=${ft_log_prefix}${suffix} bash "${script_dir}/finetune.sh" || return 1
     finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
-        dir_name=${results_prefix}${suffix} gpu_id=0 bash "${script_dir}/merge_comparison.sh" || return 1
+        dir_name=${results_prefix:+${results_prefix}/}${method} gpu_id=0 bash "${script_dir}/merge_comparison.sh" || return 1
 }
 
 worker() {
