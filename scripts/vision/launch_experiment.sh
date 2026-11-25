@@ -69,11 +69,27 @@ stamp=$(date '+%Y%m%d-%H%M%S')
     grep -v '^#' "${settings}" | grep -v '^$' | sed 's/^export //; s/^/  /'
     echo "base dir links:"
     ls -l "${MAGMAX_BASE_DIR}/checkpoints/ViT-B-16" | grep -- '->' | sed 's/^/  /'
+    # Every task vector is a checkpoint minus the zero-shot one, so runs merged
+    # against different zero-shot checkpoints are not comparable.
+    echo "zero-shot checkpoints (sha256):"
+    for f in zeroshot.pt zeroshot_unpacked.pt; do
+        p=${MAGMAX_BASE_DIR}/checkpoints/ViT-B-16/${f}
+        if [ -e "${p}" ]; then sha256sum "${p}"; else echo "(none) ${p}"; fi
+    done | sed 's/^/  /'
+    echo "checkpoints of ${dataset} present now: checkpoints_${stamp}.txt"
     echo "host: $(hostname), $(nproc) cores"
     nvidia-smi -L | sed 's/^/  /'
     echo "python: $(uv run python -c 'import sys, torch, open_clip; print(sys.version.split()[0], "torch", torch.__version__, "open_clip", open_clip.__version__)' 2>/dev/null)"
     echo
 } >> "${log_dir}/run_info.txt"
+# Which checkpoints this launch finds (path, size, modification time),
+# following symlinks: every method merged from a results directory must have
+# read the same files, and this is what shows that they did.
+ckpt_root=${MAGMAX_BASE_DIR}/checkpoints/ViT-B-16/sequential_finetuning/class_incremental
+if [ -d "${ckpt_root}" ]; then
+    find -L "${ckpt_root}" -path "*/${dataset}-*" -name '*.pt' \
+        -printf '%p\t%s\t%TY-%Tm-%Td %TH:%TM\n' | sort
+fi > "${log_dir}/checkpoints_${stamp}.txt"
 # Short options only: test/characterization/test_cli_surface.py checks every
 # long option a script uses against the CLI fixtures.
 git diff HEAD > "${log_dir}/code_${stamp}.diff"

@@ -311,7 +311,7 @@ def construct_target_dataset(
 
         # NOTE: int() floors, so a task contributing fewer than 10 examples
         # yields no meta data at all — which is why src/eval.py skips
-        # cifar100-50's all-tasks target.
+        # the all-tasks target at T=50 (CIFAR100-50 and ImageNetR-50).
         num_meta = int(0.1 * len(sampled_task_indices))
 
         meta_data_indices.extend(sampled_task_indices[:num_meta])

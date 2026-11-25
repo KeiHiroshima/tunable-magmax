@@ -73,6 +73,7 @@ finetune_merge.sh ──> finetune_splitted.py の後に merge_for_targetdata.py
 3. **zero-shot チェックポイント**：split 0 で `checkpoints/{model}/zeroshot.pt` がまだなければ保存する（[config.py:8](../src/config.py#L8) `get_zeroshot_checkpoint` **[共通]**、[modeling.py:42](../src/modeling.py#L42) `ImageEncoder.save`）。
 4. **データセット**：[datasets/registry.py:80](../src/datasets/registry.py#L80) の `get_dataset` で、[cifar100.py](../src/datasets/cifar100.py) または [imagenetr.py](../src/datasets/imagenetr.py) を CLIP の前処理付きで作る。
    - クラスの並び順（`default_class_order`）は `--taskseq_pattern` A/B/C で決まる（各ファイルの `class_order_dict`）。
+   - ImageNetR は、既存の train/test の分割（`$MAGMAX_DATA_DIR/imagenet-r/{train,test}`）を、シンボリックリンクのサブセット（`imagenet-r_subsets/<md5>/`）を通して読む。サブセットは実験の前に `uv run python -m src.datasets.prepare_imagenetr` で 1 回だけ作る。完成していないサブセットや、分割がない場合はエラーになる（分割を作り直すことはしない）。詳しくは [imagenetr_plan.md](imagenetr_plan.md) §3.1。
 5. **split 分のデータと分類ヘッド**：[cl_utils.py:11](../src/cl_utils.py#L11) の `get_dataset_and_classifier_for_split`。
    - [datasets/common.py:39](../src/datasets/common.py#L39) の `get_class_incremental_classes_and_subset_indices` で、この split が担当するクラスの train/test だけに絞る。ラベルは 0 始まりに振り直す。
    - [heads.py:56](../src/heads.py#L56) の `build_subset_classification_head` で、そのクラス名とテンプレート文から、CLIP テキストエンコーダを使ったゼロショット分類ヘッドを作る。

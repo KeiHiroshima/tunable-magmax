@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fine-tune and merge CIFAR-100 for every (variant, n_splits, seed), three jobs
-# at a time, one per GPU. The experiments run with it, and their fixed
+# Fine-tune and merge one dataset (CIFAR100 or ImageNetR) for every (variant,
+# n_splits, seed), three jobs at a time, one per GPU. The experiments run with it, and their fixed
 # settings, are in scripts/vision/experiments/; launch one with
 # scripts/vision/launch_experiment.sh.
 #
@@ -15,6 +15,16 @@
 # Every job fine-tunes (scripts/vision/finetune.sh) and then merges
 # (scripts/vision/merge_comparison.sh) with merge_fns. Finished splits are
 # skipped, so on checkpoints that already exist a job only merges.
+#
+# Merge only: for the variants in merge_only_variants, a job does not call
+# finetune.sh at all. It checks that every split's checkpoint is there
+# (src/check_checkpoints.py) and fails without training if one is missing,
+# so the merges are guaranteed to read the checkpoints that exist — the ones
+# the other methods in the same results directory were merged from.
+#
+# ImageNetR: the dataset's subsets must have been created beforehand
+# (uv run python -m src.datasets.prepare_imagenetr); the jobs only read them,
+# and the run stops before starting any job if they are not there.
 #
 # Parallelism: worker i owns GPU i and CPU cores [i*cores_per_worker,
 # (i+1)*cores_per_worker), pinned with taskset, so its DataLoader workers and
@@ -65,6 +75,7 @@ ft_log_prefix=${ft_log_prefix:-DEFAULT_NAME}
 dry_run=${dry_run:-0}
 heavy_jobs=${heavy_jobs:-}          # e.g. "full 50": job-line prefixes, separated by commas
 heavy_workers=${heavy_workers:-1}
+merge_only_variants=${merge_only_variants:-}  # e.g. "full": never train these, only merge
 # Names this run's queue and status files, so the phases of one experiment
 # (scripts/vision/launch_experiment.sh) can share a log_dir.
 phase=${phase:-}
@@ -95,6 +106,9 @@ status=${log_dir}/status${phase:+.${phase}}
 : > "${queue}"
 for variant in ${variants}; do
     case ${variant} in full|lora-reuse|lora) ;; *) echo "unknown variant ${variant}" >&2; exit 1 ;; esac
+done
+for variant in ${merge_only_variants}; do
+    case ${variant} in full|lora-reuse|lora) ;; *) echo "unknown merge-only variant ${variant}" >&2; exit 1 ;; esac
 done
 for variant in full lora-reuse lora; do
     [[ " ${variants} " == *" ${variant} "* ]] || continue
@@ -127,7 +141,8 @@ fi
 echo "======================================================================================"
 echo "${phase:+phase ${phase}: }MAGMAX_BASE_DIR=${MAGMAX_BASE_DIR}"
 echo "$(cat "${queue}" "${heavy_queue}" | wc -l) jobs on GPUs (${gpu_ids}), ${cores_per_worker} cores each; logs: ${log_dir}/"
-echo "merge_fns=(${merge_fns}) similarity_metrics=(${similarity_metrics}) epochs=${epochs}"
+echo "dataset=${dataset} merge_fns=(${merge_fns}) similarity_metrics=(${similarity_metrics}) epochs=${epochs}"
+echo "merge only (never trained): ${merge_only_variants:-none}"
 echo "results: logs/results/vision/.../${results_prefix:+${results_prefix}/}{full,lora-merge,lora-reuse}/, fine-tuning logs: .../${ft_log_prefix}[-lora|-lora-reuse]/"
 sed 's/^/  /' "${queue}"
 if [ -s "${heavy_queue}" ]; then
@@ -137,6 +152,16 @@ fi
 echo "======================================================================================"
 if [ "${dry_run}" = "1" ]; then
     exit 0
+fi
+if [ "${dataset}" = "ImageNetR" ]; then
+    # Opening the dataset raises unless the split and both subsets are in place.
+    if ! uv run python -c 'from src.config import DATA_DIR
+from src.datasets.imagenetr import _ImageNetR
+for train in (True, False):
+    _ImageNetR(DATA_DIR, train=train)'; then
+        echo "ImageNetR is not prepared; run: uv run python -m src.datasets.prepare_imagenetr" >&2
+        exit 1
+    fi
 fi
 : > "${status}"
 
@@ -161,8 +186,12 @@ run_job() {
     esac
     # Fine-tuning logs: the names finetune.sh picks by default for each
     # variant. Results: the training method's directory (merge.sh's default).
-    finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
-        dir_name=${ft_log_prefix}${suffix} bash "${script_dir}/finetune.sh" || return 1
+    if [[ " ${merge_only_variants} " == *" ${variant} "* ]]; then
+        uv run python -m src.check_checkpoints "${variant}" "${dataset}" "${n_splits}" "${seed}" "${epochs}" || return 1
+    else
+        finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
+            dir_name=${ft_log_prefix}${suffix} bash "${script_dir}/finetune.sh" || return 1
+    fi
     finetune_mode=${finetune_mode} lora_chain=${lora_chain} n_splits=${n_splits} seed=${seed} \
         dir_name=${results_prefix:+${results_prefix}/}${method} gpu_id=0 bash "${script_dir}/merge_comparison.sh" || return 1
 }
@@ -183,7 +212,7 @@ worker() {
         # One GPU, visible as cuda:0; every thread pool sized to this worker's cores.
         if CUDA_VISIBLE_DEVICES=${gpu} OMP_NUM_THREADS=${cores_per_worker} \
             MKL_NUM_THREADS=${cores_per_worker} \
-            taskset -c "${cores}" bash -c "$(declare -f run_job); script_dir=${script_dir}; results_prefix=${results_prefix}; ft_log_prefix=${ft_log_prefix}; run_job ${job}" \
+            taskset -c "${cores}" bash -c "$(declare -f run_job); script_dir=${script_dir}; results_prefix=${results_prefix}; ft_log_prefix=${ft_log_prefix}; merge_only_variants='${merge_only_variants}'; run_job ${job}" \
             >> "${log}" 2>&1; then
             result=ok
         else

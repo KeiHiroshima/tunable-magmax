@@ -3,20 +3,24 @@ import json
 import os
 import os.path
 from logging import getLogger
-from shutil import move, rmtree
+from shutil import rmtree
 
 import torch
-from torchvision import datasets
 from torchvision.datasets import ImageFolder
-from torchvision.datasets.utils import download_url
 
 
 logger = getLogger(__name__)
 
+SUBSET_CONFIG_FILE = "config.json"
+
 
 class _ImageNetR:
     """
-    Internal implementation of ImageNet-R dataset with domain/class subsetting and automatic train/test splitting.
+    Internal implementation of ImageNet-R with domain/class subsetting.
+
+    Reads an existing train/test split (<root>/imagenet-r/{train,test}) through
+    a subset of symlinks (<root>/imagenet-r_subsets/<md5>/{train,test}) that
+    build_subset creates beforehand.
     """
 
     DOMAINS = [
@@ -238,10 +242,101 @@ class _ImageNetR:
         "yorkshire_terrier",
         "zebra",
     ]
-
     @classmethod
     def get_md5(cls, subset_config):
         return hashlib.md5(json.dumps(subset_config).encode("utf-8")).hexdigest()
+
+    @classmethod
+    def default_subset_config(cls):
+        return {"domains": cls.DOMAINS, "classes": cls.CLASSES}
+
+    @staticmethod
+    def split_dir(root, train):
+        """Where the train/test split lives: <root>/imagenet-r/{train,test}."""
+        return os.path.join(os.path.abspath(os.path.expanduser(root)), "imagenet-r",
+                            "train" if train else "test")
+
+    @classmethod
+    def require_split(cls, root):
+        """Fail unless the train/test split is already in place.
+
+        The split is part of the experiment: the paper's checkpoints were
+        trained on one particular (unseeded) 80:20 split, so it has to be
+        reused as it is. This code used to make a new split, moving files,
+        whenever it found none; a wrong data path then silently produced a
+        different split. Now it refuses instead.
+        """
+        missing = [d for d in (cls.split_dir(root, True), cls.split_dir(root, False))
+                   if not os.path.isdir(d)]
+        if missing:
+            raise RuntimeError(
+                f"ImageNet-R train/test split not found: {', '.join(missing)}. "
+                "Place the existing split there (<data>/imagenet-r/{train,test}/<class>/); "
+                "it is not created automatically."
+            )
+
+    @classmethod
+    def subset_path(cls, root, subset_config, train):
+        return os.path.join(
+            os.path.abspath(os.path.expanduser(root)),
+            "imagenet-r_subsets",
+            cls.get_md5(subset_config),
+            "train" if train else "test",
+        )
+
+    @staticmethod
+    def is_subset_complete(path):
+        """config.json is written last, so a subset without it is unfinished."""
+        return os.path.isfile(os.path.join(path, SUBSET_CONFIG_FILE))
+
+    @classmethod
+    def build_subset(cls, root, subset_config=None, train=True):
+        """Create the subset of symlinks for one split, if it is not there yet.
+
+        Run once before any experiment (src/datasets/prepare_imagenetr.py),
+        never from the training or merging jobs: those run in parallel and
+        would race on the same directory. The subset is built in a temporary
+        directory and renamed into place only when complete, so an
+        interrupted build leaves nothing that looks finished. An unfinished
+        subset left by older code (no config.json) is built again.
+
+        Returns the subset's path.
+        """
+        cls.require_split(root)
+        subset_config = subset_config or cls.default_subset_config()
+        path = cls.subset_path(root, subset_config, train)
+        if cls.is_subset_complete(path):
+            logger.info(f"Using subset that already exists: {path}")
+            return path
+        if os.path.exists(path):
+            logger.warning(f"Rebuilding unfinished subset {path}")
+            rmtree(path)  # symlinks only; rmtree does not follow them
+
+        source = cls.split_dir(root, train)
+        tmp = f"{path}.tmp-{os.getpid()}"
+        if os.path.exists(tmp):
+            rmtree(tmp)
+        for c in subset_config["classes"]:
+            source_cls_path = os.path.join(source, c)
+            new_cls_path = os.path.join(tmp, c)
+            os.makedirs(new_cls_path, exist_ok=True)
+            for domain in subset_config["domains"]:
+                for img_name in os.listdir(source_cls_path):
+                    if img_name.startswith(domain):
+                        os.symlink(
+                            os.path.join(source_cls_path, img_name),
+                            os.path.join(new_cls_path, img_name),
+                        )
+            if not os.listdir(new_cls_path):
+                logger.warning(
+                    f"Samples from domains {subset_config['domains']} do not exist "
+                    f"for class {c}, leaving an empty folder!"
+                )
+        with open(os.path.join(tmp, SUBSET_CONFIG_FILE), "w") as config_file:
+            json.dump(subset_config, config_file)
+        os.rename(tmp, path)
+        logger.info(f"Created subset {path}")
+        return path
 
     def __init__(
         self,
@@ -250,138 +345,23 @@ class _ImageNetR:
         transform=None,
         target_transform=None,
         subset_config=None,
-        download=False,
     ):
         self.root = os.path.abspath(os.path.expanduser(root))
-        self.fpath = os.path.join(
-            os.path.abspath(root), "imagenet-r", "train" if train else "test"
-        )
+        self.require_split(self.root)
 
-        self.download_and_split_if_needed(download)
-
-        if not subset_config:
-            subset_config = {"domains": self.DOMAINS, "classes": self.CLASSES}
+        subset_config = subset_config or self.default_subset_config()
         assert "domains" in subset_config and "classes" in subset_config
         logger.debug(f"Using subset config: {subset_config}")
 
-        id = self.get_md5(subset_config)
-        new_fpath = os.path.join(
-            os.path.abspath(root),
-            "imagenet-r_subsets",
-            id,
-            "train" if train else "test",
-        )
-        if not os.path.exists(new_fpath):
-            print("Creating a subset from scratch")
-            for cls in subset_config["classes"]:
-                source_cls_path = os.path.join(self.fpath, cls)
-                new_cls_path = os.path.join(new_fpath, cls)
-                os.makedirs(new_cls_path, exist_ok=True)
-
-                for domain in subset_config["domains"]:
-                    for img_name in os.listdir(source_cls_path):
-                        if img_name.startswith(domain):
-                            os.symlink(
-                                os.path.join(source_cls_path, img_name),
-                                os.path.join(new_cls_path, img_name),
-                            )
-
-                if not os.listdir(new_cls_path):
-                    logger.warning(
-                        f"Samples from domains {subset_config['domains']} do not exist for class {cls}, leaving an empty folder!"
-                    )
-                    # print(f"Samples from domains {subset_config['domains']} do not exist for class {cls}, skipping!")
-                    # os.rmdir(new_cls_path)
-
-            with open(os.path.join(new_fpath, "config.json"), "w") as config_file:
-                json.dump(subset_config, config_file)
-        else:
-            logger.info("Using subset that already exists")
-
-        self.fpath = new_fpath
+        path = self.subset_path(self.root, subset_config, train)
+        if not self.is_subset_complete(path):
+            raise RuntimeError(
+                f"ImageNet-R subset {path} is missing or unfinished. Create it first with "
+                "`uv run python -m src.datasets.prepare_imagenetr` "
+                "(not from the experiment jobs, which run in parallel)."
+            )
+        self.fpath = path
         self.data = ImageFolder(self.fpath, transform=transform, allow_empty=True)
-
-    def download_and_split_if_needed(self, download):
-        """Download dataset if missing and split into train/test (80:20) if not already split."""
-        url = "https://people.eecs.berkeley.edu/~hendrycks/imagenet-r.tar"
-        filename = "imagenet-r.tar"
-
-        fpath = os.path.join(self.root, "imagenet-r")
-
-        if not os.path.exists(fpath):
-            if not download:
-                raise RuntimeError(
-                    "Dataset not found. You can use download=True to download it"
-                )
-            else:
-                print("Downloading from " + url)
-                download_url(url, self.root, filename=filename)
-
-                import tarfile
-
-                tar_ref = tarfile.open(os.path.join(self.root, filename), "r")
-                tar_ref.extractall(self.root)
-                tar_ref.close()
-
-                # rename dirs, e.g. "n01443537" -> "goldfish"
-                with open(fpath + "/README.txt", "r") as f:
-                    for line in f:
-                        if not line.startswith("n"):
-                            continue
-                        curr_dir = os.path.join(fpath, line.split(" ")[0])
-                        new_dir = os.path.join(fpath, line.split(" ")[1].split("\n")[0])
-                        move(curr_dir, new_dir)
-
-        if not os.path.exists(os.path.join(fpath, "train")) and not os.path.exists(
-            os.path.join(fpath, "test")
-        ):
-            dataset = datasets.ImageFolder(fpath, transform=None)
-
-            train_size = int(0.8 * len(dataset))
-            val_size = len(dataset) - train_size
-
-            train, val = torch.utils.data.random_split(dataset, [train_size, val_size])
-            train_idx, val_idx = train.indices, val.indices
-
-            self.train_file_list = [dataset.imgs[i][0] for i in train_idx]
-            self.test_file_list = [dataset.imgs[i][0] for i in val_idx]
-
-            self._split(dataset, fpath)
-
-    def _split(self, dataset, fpath):
-        train_folder = os.path.join(fpath, "train")
-        test_folder = os.path.join(fpath, "test")
-
-        if os.path.exists(train_folder):
-            rmtree(train_folder)
-        if os.path.exists(test_folder):
-            rmtree(test_folder)
-        os.mkdir(train_folder)
-        os.mkdir(test_folder)
-
-        for c in dataset.classes:
-            if not os.path.exists(os.path.join(train_folder, c)):
-                os.mkdir(os.path.join(os.path.join(train_folder, c)))
-            if not os.path.exists(os.path.join(test_folder, c)):
-                os.mkdir(os.path.join(os.path.join(test_folder, c)))
-
-        for path in self.train_file_list:
-            if "\\" in path:
-                path = path.replace("\\", "/")
-            src = path
-            dst = os.path.join(train_folder, "/".join(path.split("/")[-2:]))
-            move(src, dst)
-
-        for path in self.test_file_list:
-            if "\\" in path:
-                path = path.replace("\\", "/")
-            src = path
-            dst = os.path.join(test_folder, "/".join(path.split("/")[-2:]))
-            move(src, dst)
-
-        for c in dataset.classes:
-            path = os.path.join(fpath, c)
-            rmtree(path)
 
 
 class ImageNetR:
@@ -608,7 +588,6 @@ class ImageNetR:
             train=True,
             transform=preprocess,
             target_transform=None,
-            download=False,
             subset_config=subset_config,
         ).data
         self.train_loader = torch.utils.data.DataLoader(
@@ -623,7 +602,6 @@ class ImageNetR:
             train=False,
             transform=preprocess,
             target_transform=None,
-            download=False,
             subset_config=subset_config,
         ).data
         self.test_loader = torch.utils.data.DataLoader(

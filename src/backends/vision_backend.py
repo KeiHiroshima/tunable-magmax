@@ -67,6 +67,15 @@ def _ckpt_dir(args):
     )
 
 
+def split_checkpoint_path(args, split_idx):
+    """The file fine-tuning writes for one split and merging reads back: the
+    whole image encoder (src.paths.finetuned_path), or under --finetune_mode
+    lora only its adapter (src.paths.adapter_path). src/check_checkpoints.py checks
+    through here too, so it looks exactly where these two do."""
+    path = adapter_path if _lora(args) else finetuned_path
+    return path(_ckpt_dir(args), split_idx)
+
+
 def _ensure_unpacked_zeroshot_checkpoint(args) -> str:
     """The base every LoRA model is built on: zeroshot.pt (created first if
     missing, exactly as a full run would) with its image-tower attention
@@ -145,11 +154,7 @@ def _run_sequential_finetuning(args):
     # finetune for each split separately
     for split_idx in range(args.n_splits):
         logger.info(f"\n##### SPLIT {split_idx} #####")
-        ft_path = (
-            adapter_path(ckpdir, split_idx)
-            if lora_config
-            else finetuned_path(ckpdir, split_idx)
-        )
+        ft_path = split_checkpoint_path(args, split_idx)
         if os.path.exists(ft_path):
             logger.info(
                 f"Skipping finetuning on split {split_idx}, "
@@ -261,14 +266,13 @@ def merge_and_evaluate(args):
     method = "seq-ft" if args.sequential_finetuning else "ind-ft"
     name = f"merging_target-{args.dataset}-{args.n_splits}-{method}"
 
-    ckpt_dir = _ckpt_dir(args)
     if _lora(args):
         # As in the NLP backend: each split's task vector is rebuilt from the
         # adapters, over the adapted q/v weights only, and applied to the
         # unpacked zero-shot model those weights belong to.
         pretrained_checkpoint = _ensure_unpacked_zeroshot_checkpoint(args)
         adapters = [
-            torch.load(adapter_path(ckpt_dir, _idx), weights_only=False)
+            torch.load(split_checkpoint_path(args, _idx), weights_only=False)
             for _idx in range(args.n_splits)
         ]
         task_vectors = [
@@ -280,7 +284,7 @@ def merge_and_evaluate(args):
     else:
         pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
         task_vectors = [
-            TaskVector(pretrained_checkpoint, finetuned_path(ckpt_dir, _idx))
+            TaskVector(pretrained_checkpoint, split_checkpoint_path(args, _idx))
             for _idx in range(args.n_splits)
         ]
 

@@ -237,9 +237,12 @@ def evaluate_merged_fts_on_target_data(
             )
             continue
         elif args.n_splits == 50 and env.target_id == 26:
-            # Skip cifar100-50 target data id 26 due to too few data
+            # Target 26 draws evenly from every task: at T=50 that is 4 of the
+            # 200 examples per task, whose 10% leaves no meta data. Holds for
+            # CIFAR100-50 and ImageNetR-50 alike.
             logger.info(
-                "Skipping evaluation for cifar100-50 target data id 26 due to too few data."
+                f"Skipping evaluation for {args.dataset}-50 target data id 26 "
+                "due to too few data."
             )
             continue
 
