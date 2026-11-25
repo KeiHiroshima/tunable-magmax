@@ -84,10 +84,10 @@ def merge_max_abs(task_vectors):
 def mask_and_merge_by_weights(task_vectors, weights_each_task, *, seed):
     """Masked MAGMAX merge given a fixed per-task weight vector (summing to 1).
 
-    Extracted from merge_max_abs_masked_with_targetdata's tail: this half of
-    that function only ever used task_vectors and weights_each_task, never
-    anything vision-specific (ImageEncoder, class_order, ...) — that lives in
-    the *other* half, which computes weights_each_task from similarity.
+    Extracted from the old merge_max_abs_masked_with_targetdata's tail: this
+    half of that function only ever used task_vectors and weights_each_task,
+    never anything vision-specific (ImageEncoder, class_order, ...) — that
+    lives in the *other* half, now compute_preference_weights.
     Pulled out so a non-vision caller can supply weights_each_task some other
     way (e.g. directly from a target environment's known task distribution)
     without duplicating this ~200-line tensor-masking routine.
@@ -342,37 +342,51 @@ def mask_and_merge_by_weights(task_vectors, weights_each_task, *, seed):
     return TaskVector(vector=new_vector), num_unaligned_accum_dict, num_params_all
 
 
-def merge_max_abs_masked_with_targetdata(
+def masked_magmax_by_weights(task_vectors, weights_each_task, *, seed):
+    """Tunable MAGMAX's merge step (Algorithm 1): each task supplies a share of
+    the merged elements equal to its preference weight.
+
+    Returns (merged TaskVector, diagnostics for the results JSON). Under
+    --merge_space core the diagnostics count core-matrix entries."""
+    merged_tv, num_unaligned, num_params_all = mask_and_merge_by_weights(
+        task_vectors, weights_each_task, seed=seed
+    )
+    logger.info(f"num_unaligned_accum_dict: {num_unaligned}")
+    return merged_tv, {"num_unaligned": num_unaligned, "num_params_all": num_params_all}
+
+
+def weighted_ties_by_weights(task_vectors, weights_each_task, *, seed):
+    """Tunable TIES's merge step: TIES-Merging with every task's say in the
+    sign election and in the disjoint mean weighted by its preference weight
+    (see ties). Deterministic, so `seed` is unused; it is taken so that both
+    preference-weighted merges share one signature (MergeSpec.weighted_fn).
+
+    Returns (merged TaskVector, diagnostics): TIES has none to report."""
+    return ties(task_vectors, weights=weights_each_task), {}
+
+
+def compute_preference_weights(
     task_vectors,
     train_subset_each_task,
     target_data,
-    similarity_metric="cosine",
-    args=None,
-    pretrained_checkpoint=None,
-    core_space=None,
+    similarity_metric,
+    args,
+    pretrained_checkpoint,
 ):
-    """`core_space` (--merge_space core): the similarity scores — and the
-    encoders the *_embedded metrics build — still use the task vectors as
-    given; only the masked MAGMAX merge runs on them rotated into Core Space,
-    so its per-task budgets count core-matrix entries."""
-    # Was a module-level global; derived from the same args as before, so the
-    # value is unchanged for every existing caller.
-    if pretrained_checkpoint is None:
-        pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+    """The preference vector for one target environment: each task's
+    similarity to the target data, normalized to sum to 1.
 
-    # calculate similarity scores between train_data and target_data
-    similarity_score_list = [None for _ in range(len(train_subset_each_task))]
+    `labels` counts the target samples whose class belongs to each task; the
+    other metrics compare each task's training subset with the target data,
+    the *_embedded ones in the feature space of that task's fine-tuned encoder
+    (built from `pretrained_checkpoint` + its task vector)."""
     distance_metric = {
         "labels": count_labels,
         "cosine": compute_cosine_similarity,
         "mmd": compute_mmd_similarity,
         "ot": compute_otdd_similarity,
     }
-    similarity_metric_key = (
-        similarity_metric.split("_")[0]
-        if "_" in similarity_metric
-        else similarity_metric
-    )
+    similarity_metric_key = similarity_metric.split("_")[0]
 
     if similarity_metric == "labels":
         preprocess_fn = ImageEncoder(args, keep_lang=True).train_preprocess
@@ -388,6 +402,7 @@ def merge_max_abs_masked_with_targetdata(
             for i in range(args.n_splits)
         }
 
+    similarity_score_list = []
     for i, train_subset_onetask in enumerate(train_subset_each_task):
         if similarity_metric == "labels":
             similarity_score = distance_metric[similarity_metric_key](
@@ -416,36 +431,62 @@ def merge_max_abs_masked_with_targetdata(
                 feature_cost=feature_cost,
                 device=args.device,
             )
+        similarity_score_list.append(similarity_score)
 
-        similarity_score_list[i] = similarity_score
-
-    # calculate weights based on similarity scores
     total_score = sum(similarity_score_list)
-    weights_each_task = [
-        similarity_score_list[i] / total_score
-        for i in range(len(similarity_score_list))
-    ]
-    logger.debug(f"total_score: {total_score}")
-
+    weights_each_task = [score / total_score for score in similarity_score_list]
     logger.debug(f"similarity metric: {similarity_metric}")
     logger.debug(f"similarity_score_list: {similarity_score_list}")
     logger.debug(f"weights_each_task: {weights_each_task}")
+    return weights_each_task
 
-    # masked MAGMAX merging with calculated number of elements per task vector.
+
+def merge_with_targetdata(
+    weighted_fn,
+    task_vectors,
+    train_subset_each_task,
+    target_data,
+    similarity_metric="cosine",
+    args=None,
+    pretrained_checkpoint=None,
+    core_space=None,
+):
+    """A preference-weighted merge for one vision target environment: infer the
+    preference vector from the target data (compute_preference_weights), then
+    merge with `weighted_fn` (a MergeSpec.weighted_fn).
+
+    `core_space` (--merge_space core): the similarity scores — and the
+    encoders the *_embedded metrics build — still use the task vectors as
+    given; only the merge runs on them rotated into Core Space, so e.g. the
+    masked MAGMAX budgets count core-matrix entries.
+
+    The merge's diagnostics (if any) are written to this environment's results
+    file, which src/eval.py then adds the accuracies to."""
+    # Was a module-level global; derived from the same args as before, so the
+    # value is unchanged for every existing caller.
+    if pretrained_checkpoint is None:
+        pretrained_checkpoint = get_zeroshot_checkpoint(args.model)
+
+    weights_each_task = compute_preference_weights(
+        task_vectors,
+        train_subset_each_task,
+        target_data,
+        similarity_metric,
+        args,
+        pretrained_checkpoint,
+    )
+
     # The seed combines the run and the target environment, so this merge is
     # reproducible and independent of how many targets were merged before it.
-    merged_tv, num_unaligned_accum_dict, num_params_all = mask_and_merge_by_weights(
+    merged_tv, diagnostics = weighted_fn(
         task_vectors if core_space is None else core_space.to_core(task_vectors),
         weights_each_task,
         seed=derive_seed(args.seed, args.target_id),
     )
     if core_space is not None:
         merged_tv = core_space.from_core(merged_tv)
-    new_vector = merged_tv.vector
 
-    logger.info(f"num_unaligned_accum_dict: {num_unaligned_accum_dict}")
-
-    if args.results_db:
+    if args.results_db and diagnostics:
         # Same file src/eval.py writes this environment's accuracies to — it is
         # written first, here, and eval.py merges its own fields in afterwards.
         # Both sides therefore have to spell the path identically: results live
@@ -458,17 +499,26 @@ def merge_max_abs_masked_with_targetdata(
             / f"{name}_lambda{args.coeff}_{similarity_metric}_target{args.target_id}_seed{args.seed}.json"
         )
         existing = json.loads(log_path.read_text()) if log_path.exists() else {}
-        # Under --merge_space core both count core-matrix entries, not weights.
-        existing["num_unaligned"] = num_unaligned_accum_dict
-        existing["num_params_all"] = num_params_all
+        existing.update(diagnostics)
         log_path.write_text(json.dumps(existing, indent=4))
-        logger.info(f"Saved num_unaligned log to {log_path}")
+        logger.info(f"Saved merge diagnostics to {log_path}")
 
-    return TaskVector(vector=new_vector), weights_each_task, similarity_metric
+    return merged_tv, weights_each_task, similarity_metric
 
 
-def ties(task_vectors):
-    if len(task_vectors) < 2:
+def ties(task_vectors, weights=None):
+    """TIES-Merging (top-20% pruning, sign elected by mass, disjoint mean).
+
+    With `weights` (one per task vector), Tunable TIES: each task's say in the
+    sign election and in the disjoint mean is its weight. Uniform weights give
+    plain TIES; tasks weighted 0 take no part and are dropped before the task
+    vectors are stacked."""
+    if weights is not None:
+        kept = [i for i, w in enumerate(weights) if w > 0]
+        assert kept, "every task is weighted 0"
+        task_vectors = [task_vectors[i] for i in kept]
+        weights = [weights[i] for i in kept]
+    elif len(task_vectors) < 2:
         return task_vectors[0]
 
     reset_type = "topk"
@@ -479,8 +529,10 @@ def ties(task_vectors):
         [state_dict_to_vector(tv.vector) for tv in task_vectors]
     )
 
-    print(
-        f"\nMerging with TIES merging: pruning {reset_type}-{reset_thresh}, resolve sign by {resolve}, merge by {merge}"
+    logger.info(
+        f"Merging with TIES merging: pruning {reset_type}-{reset_thresh}, "
+        f"resolve sign by {resolve}, merge by {merge}"
+        + (f", task weights {weights}" if weights is not None else "")
     )
 
     merged_flat_tv = merge_methods(
@@ -489,6 +541,7 @@ def ties(task_vectors):
         reset_thresh=reset_thresh,
         resolve_method=resolve,
         merge_func=merge,
+        weight_each_task=weights,
     )
     merged_tv = vector_to_state_dict(
         merged_flat_tv, task_vectors[0].vector, remove_keys=[]

@@ -76,7 +76,7 @@ def has_evaluation_result(json_path, key="overall_accuracy") -> bool:
 
     Both backends skip a target environment whose results file is finished, so
     an interrupted merge run resumes where it stopped. Existence alone is not
-    enough: vision's merge_max_abs_masked_with_targetdata writes
+    enough: vision's merge_with_targetdata writes
     num_unaligned/num_params_all to this same file *before* the model is
     evaluated, so a run that dies during evaluation leaves a file with no
     accuracy in it, and treating that as done would skip the target forever.

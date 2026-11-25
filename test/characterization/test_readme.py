@@ -104,28 +104,26 @@ def test_documented_defaults_match_the_parser(flag, expected):
 
 
 # --- removed options --------------------------------------------------------
+# Options and methods removed in 99b4dc9 because nothing implemented them or the
+# paper never used them. The README no longer lists them (5150b4c), so only the
+# code side is checked: they must stay gone, failing at argument parsing rather
+# than being silently ignored.
 
 
 REMOVED = ["--warmup_length", "--save", "--lwf_lamb", "--ewc_lamb", "--lamb_case"]
 
 
 @pytest.mark.parametrize("flag", REMOVED)
-def test_removed_options_are_documented_and_actually_gone(flag):
-    assert f"`{flag}`" in README, f"{flag} is gone from the code but not the README"
-
+def test_removed_options_are_gone(flag):
     with pytest.raises(SystemExit):
         parse_arguments(["--model", "m", "--dataset", "d", flag, "1"])
 
 
-@pytest.mark.parametrize("name", ["select_one_task_vector", "hpo"])
-def test_removed_methods_are_documented_and_actually_gone(name):
-    assert name in README
-    assert name not in MERGE_SPECS
+def test_removed_merge_fn_is_gone():
+    assert "select_one_task_vector" not in MERGE_SPECS
 
-    metrics = parse_arguments(
-        ["--model", "m", "--dataset", "d"]
-    )  # parses, so the choices below are the live ones
-    assert metrics is not None
+
+def test_removed_similarity_metric_is_gone():
     with pytest.raises(SystemExit):
         parse_arguments(["--model", "m", "--dataset", "d", "--similarity_metric", "hpo"])
 

@@ -41,7 +41,19 @@ COMPETITOR_ALL_DICT = {
     # vector is the target environment's own known ratio; see
     # src/nlp/target_data.py), so its competitor key has no "-<metric>" suffix.
     "masked_magmax_with_targetdata": "Tunable MAGMAX",
+    # Tunable TIES: TIES-Merging weighted by the same preference vector.
+    # Appended after Tunable MAGMAX so the existing plot colors are unchanged.
+    "weighted_ties_with_targetdata-labels": "Tunable TIES (Labels)",
+    "weighted_ties_with_targetdata-cosine_embedded": "Tunable TIES (Cosine)",
+    "weighted_ties_with_targetdata-ot_embedded": "Tunable TIES (OT)",
+    "weighted_ties_with_targetdata-mmd_embedded": "Tunable TIES (MMD)",
+    "weighted_ties_with_targetdata": "Tunable TIES",
 }
+
+# The --merge_fn values of the preference-weighted merges (MergeSpec.weighted_fn
+# in src/merging/registry.py) all end in this; only they have a
+# similarity_metric, and their results sit one directory deeper, under it.
+TARGET_DATA_SUFFIX = "_with_targetdata"
 
 # ---------------------------------------------------------------------------
 # Vision key / path utilities
@@ -72,7 +84,7 @@ def parse_competitor_key(key: str) -> tuple[str, str, str | None, str]:
         -> ("magmax", "", None, "")
     """
     head, _, last = key.rpartition("-")
-    if "masked_magmax_with_targetdata" in key and last in SIMILARITY_METRICS:
+    if TARGET_DATA_SUFFIX in key and last in SIMILARITY_METRICS:
         merge_fn = head
         metric_name = last
         similarity_metric = f"{metric_name}_"
@@ -116,7 +128,7 @@ def resolve_dir_path(
     if dir_name is not None:
         return dir_path_shared.replace(
             "DIR_NAME",
-            dir_name["proposed"] if "masked" in key else dir_name["other"],
+            dir_name["proposed"] if TARGET_DATA_SUFFIX in key else dir_name["other"],
         )
     return dir_path_shared
 
@@ -203,6 +215,7 @@ def nlp_result_path(
     sequential_finetuning: bool = True,
     base_dir: str | None = None,
     finetune_mode: str = "full",
+    lora_chain: str = "merge",
 ) -> ResultPath:
     """A ResultPath for the NLP layout:
     `{ckpt_dir}/{merge_fn}/target{id}_seed{s}.json`
@@ -218,13 +231,19 @@ def nlp_result_path(
     the analysis notebooks stay free of this project's ML dependencies (see
     test/characterization/test_merge_registry.py::
     test_postprocessing_labels_stay_in_sync_with_the_registry). If that
-    template changes, this needs updating too — including the `-lora` suffix
+    template changes, this needs updating too — including the `-lora` /
+    `-lora-reuse` suffix (src/paths.py::finetune_mode_suffix) that
     src/backends/nlp_classification_backend.py::_ckpt_dir puts on the dataset
-    directory of a --finetune_mode lora run.
+    directory of a --finetune_mode lora run, by --lora_chain.
     """
     base_dir = base_dir or os.environ.get("MAGMAX_BASE_DIR", "YOUR_BASE_DIR_FOR_CHECKPOINTS")
     sequential = "sequential_finetuning" if sequential_finetuning else ""
-    scope = dataset if finetune_mode == "full" else f"{dataset}-{finetune_mode}"
+    if finetune_mode == "full":
+        scope = dataset
+    elif lora_chain == "reuse":
+        scope = f"{dataset}-{finetune_mode}-reuse"
+    else:
+        scope = f"{dataset}-{finetune_mode}"
 
     def _path(key: str, target_id: int, seed: int) -> str:
         run_dir = f"ft-pattern_{taskseq_pattern}-epochs-{epochs}-seed:{seed}"

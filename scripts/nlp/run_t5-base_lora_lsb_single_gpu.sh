@@ -26,6 +26,14 @@
 export model=t5-base
 export dataset=LSB
 export finetune_mode=lora
+# merge: an adapter per task (O-LoRA eq. 9). reuse: one adapter across every
+# task (src/lora.py); its logs are named -lora-reuse instead of -lora.
+export lora_chain=${lora_chain:-merge}  # merge reuse
+if [ "${lora_chain}" = "reuse" ]; then
+    mode_tag=lora-reuse
+else
+    mode_tag=${finetune_mode}
+fi
 export gpu_id=${gpu_id:-0}
 # Only one process runs at a time, so give it every core this shell may use.
 # This deliberately ignores an inherited OMP_NUM_THREADS (a login profile may
@@ -40,7 +48,7 @@ mkdir -p ${log_dir}
 
 failed=()
 for task_seq in ${orders}; do
-    log=${log_dir}/${model}_${dataset}-${finetune_mode}_order${task_seq}.log
+    log=${log_dir}/${model}_${dataset}-${mode_tag}_order${task_seq}.log
     echo "order ${task_seq} -> GPU ${gpu_id} (log: ${log})"
     (
         export orders=${task_seq}
@@ -56,7 +64,7 @@ echo "==========================================================================
 if [ ${#failed[@]} -eq 0 ]; then
     echo "All orders finished."
 else
-    echo "Failed orders (see ${log_dir}/${model}_${dataset}-${finetune_mode}_order*.log):"
+    echo "Failed orders (see ${log_dir}/${model}_${dataset}-${mode_tag}_order*.log):"
     printf '  %s\n' "${failed[@]}"
     exit 1
 fi

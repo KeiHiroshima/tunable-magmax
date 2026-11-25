@@ -58,10 +58,10 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
    `--target_config`, builds the mixed test set (`src/datasets/common.py::construct_target_dataset`,
    which also carves off a 10% meta split) and merges according to
    `MergeSpec.needs_target_data` (`src/merging/registry.py`) — baselines merge
-   once via `apply_merge`; `masked_magmax_with_targetdata` estimates a
-   preference vector from the meta split (`src/merging/similarity.py`,
-   `--similarity_metric`) and merges via `mask_and_merge_by_weights`
-   (`src/merging/task_vectors.py`).
+   once via `apply_merge`; the preference-weighted merges
+   (`*_with_targetdata`) estimate a preference vector from the meta split
+   (`src/merging/task_vectors.py::compute_preference_weights`,
+   `--similarity_metric`) and merge by it with their `MergeSpec.weighted_fn`.
 
 **NLP classification (`nlp_classification_backend.py`, `StdCL`/`LSB`)**
 1. `finetune(args)` → `src/nlp/finetune_nlp.py::finetune_task_sequence`: the
@@ -71,7 +71,9 @@ a backend that implements `finetune(args)` / `merge_and_evaluate(args)`
    `--finetune_mode full` saves a `finetuned_{i}.pt` per task;
    `--finetune_mode lora` saves only a LoRA `adapter_{i}.pt` per task
    (`src/lora.py`), and each task starts from the zero-shot model with
-   every earlier adapter merged in.
+   every earlier adapter merged in. With `--lora_chain reuse` one adapter is
+   trained across every task instead: each task starts from the unmerged
+   zero-shot model and continues the previous task's adapter.
 2. `merge_and_evaluate(args)` mirrors vision's `evaluate_merged_fts_on_target_data`
    step for step — same `--target_config` loop, same `MergeSpec.needs_target_data`
    branch, every `--merge_fn` scored against every target environment — but
@@ -170,13 +172,20 @@ uv run python merge_for_targetdata.py \
 | `--merge_fn` | Method | NLP support |
 |---|---|---|
 | `masked_magmax_with_targetdata` | **Tunable MAGMAX (proposed)** | `StdCL`/`LSB` only |
+| `weighted_ties_with_targetdata` | Tunable TIES: TIES-Merging with the sign election and the disjoint mean weighted by the preference vector | `StdCL`/`LSB` only |
 | `magmax` | MAGMAX | yes |
 | `ties` | TIES-Merging | yes |
 | `average` | Model Soup | yes |
 | `random_mix` | Rand Mix | yes |
 | `finetune` | Baseline: keep the last task's model, no merging | yes |
 
-`--similarity_metric` applies to vision's `masked_magmax_with_targetdata` only
+Both `*_with_targetdata` merges take one target environment's preference
+vector. Tunable MAGMAX gives each task a share of the merged elements equal to
+its weight; Tunable TIES keeps TIES's top-20% pruning and weights each task's
+vote in the sign election and its entries in the mean — uniform weights give
+plain TIES, and a task weighted 0 takes no part.
+
+`--similarity_metric` applies to vision's `*_with_targetdata` merges only
 (NLP's preference vector needs no estimate — see "NLP tasks" below) and picks
 how the preference vector is estimated: `labels` (label-distribution
 similarity), or `ot_embedded` / `cosine_embedded` / `mmd_embedded` (feature-space
@@ -236,9 +245,9 @@ Every method's file holds `overall_accuracy` (micro-averaged over examples),
 `average_accuracy` (mean over tasks), `taskwise_accuracies`, and a
 `target_dataset_info` block with the target environment's composition
 (`target_id`, `ratio_task_to_be_fetched`, `task_idx_selected`,
-`num_data_each_task`, ...). Only `masked_magmax_with_targetdata`'s file also
-holds `similarity_metric`, `weights_each_task` (the preference vector), and
-`num_unaligned` / `num_params_all`.
+`num_data_each_task`, ...). Only the `*_with_targetdata` files also hold
+`similarity_metric` and `weights_each_task` (the preference vector), and
+`masked_magmax_with_targetdata`'s also `num_unaligned` / `num_params_all`.
 
 **NLP ignores `--results_db`** and writes into the checkpoint directory instead,
 one JSON per target environment for every `--merge_fn` (baselines included —
@@ -251,12 +260,12 @@ see below):
 Every method's file holds `overall_accuracy`, `taskwise_accuracies`,
 `ratio_task_to_be_fetched`, `task_idx_selected`, and `num_data_each_task` at
 the top level — a flatter shape than vision's, with no `average_accuracy` or
-nested `target_dataset_info`. Only `masked_magmax_with_targetdata`'s file also
-holds `weights_each_task` (the preference vector) and `num_unaligned` /
-`num_params_all`.
+nested `target_dataset_info`. Only the `*_with_targetdata` files also hold
+`weights_each_task` (the preference vector), and
+`masked_magmax_with_targetdata`'s also `num_unaligned` / `num_params_all`.
 
 With `--eval_full_testsets`, every method that yields a single model (all
-but `masked_magmax_with_targetdata`) is also scored on every task's whole
+but the `*_with_targetdata` merges) is also scored on every task's whole
 test split, and `{merge_fn}/full_testsets_seed{s}.json` holds its
 `taskwise_accuracies` and `average_accuracy` — O-LoRA's Average Accuracy.
 
@@ -282,6 +291,7 @@ bash scripts/vision/finetune_merge.sh
 | `--wd` | 0.1 | StdCL/LSB: 0 |
 | `--lr_schedule` | `cosine` | StdCL/LSB: `constant` (no warmup) |
 | `--finetune_mode` | `full` | `full` or `lora` (StdCL/LSB, and CIFAR100/ImageNetR: LoRA on the image tower's q/v) |
+| `--lora_chain` | `merge` | how sequential LoRA tasks chain. `merge`: a fresh adapter per task, earlier ones merged into the weights (O-LoRA eq. 9). `reuse`: one adapter trained across every task on the unmerged base, so every task vector is a single rank-r adapter; needs `--finetune_mode lora` and `--sequential-finetuning`, and writes to `-lora-reuse` directories (scripts: `lora_chain=reuse`) |
 | `--grad_accum_steps` | 1 | NLP only: micro-batches per optimizer step |
 | `--merge_space` | `full` | `core`: merge in Core Space (`--finetune_mode lora` only; see above) |
 | `--scaling_coef` | 0.5 | StdCL/LSB: scale of the merged task vector |
@@ -372,7 +382,8 @@ running the entry points directly.
 ignores `--similarity_metric`. As for vision, a target environment whose
 results file already holds an `overall_accuracy` is skipped, so re-running any
 of these resumes where it stopped. Each method's stdout is appended to
-`outs/{model}/nlp_classification/{dataset}-{finetune_mode}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`.
+`outs/{model}/nlp_classification/{dataset}-{finetune_mode}/taskseq_{p}/merge-{merge_fn}-{target_config}-epochs:{e}-seed:{s}.out`
+(`{dataset}-lora-reuse` under `lora_chain=reuse`).
 
 Or directly:
 

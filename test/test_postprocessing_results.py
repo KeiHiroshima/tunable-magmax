@@ -99,6 +99,16 @@ def test_nlp_result_path_finds_lora_runs_under_their_own_directory(tmp_path):
     assert "/nlp_classification/LSB-lora/" in lora
 
 
+def test_nlp_result_path_finds_reuse_runs_under_their_own_directory(tmp_path):
+    kwargs = dict(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4", base_dir=str(tmp_path))
+
+    reuse = nlp_result_path(finetune_mode="lora", lora_chain="reuse", **kwargs)("magmax", 1, 3)
+    merge = nlp_result_path(finetune_mode="lora", **kwargs)("magmax", 1, 3)
+
+    assert "/nlp_classification/LSB-lora-reuse/" in reuse
+    assert "/nlp_classification/LSB-lora/" in merge
+
+
 def test_nlp_result_path_agrees_with_the_backend(tmp_path, monkeypatch):
     from argparse import Namespace
 
@@ -106,12 +116,14 @@ def test_nlp_result_path_agrees_with_the_backend(tmp_path, monkeypatch):
     from src.backends import nlp_classification_backend
 
     monkeypatch.setattr(src.paths, "BASE_DIR", str(tmp_path))
-    for mode in ("full", "lora"):
+    for mode, chain in (("full", "merge"), ("lora", "merge"), ("lora", "reuse")):
         args = Namespace(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4",
-                         seed=3, sequential_finetuning=True, finetune_mode=mode)
+                         seed=3, sequential_finetuning=True, finetune_mode=mode,
+                         lora_chain=chain)
         expected = f"{nlp_classification_backend._ckpt_dir(args)}/magmax/target1_seed3.json"
         path_fn = nlp_result_path(model="t5-large", dataset="LSB", epochs=1, taskseq_pattern="4",
-                                  base_dir=str(tmp_path), finetune_mode=mode)
+                                  base_dir=str(tmp_path), finetune_mode=mode,
+                                  lora_chain=chain)
         assert path_fn("magmax", 1, 3) == expected
 
 

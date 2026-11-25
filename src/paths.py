@@ -14,9 +14,11 @@ The layout is:
 `group` and `scope` are what differ between backends, so each backend supplies
 its own (see the `_ckpt_dir` helper each one defines):
 
-    vision        group="{split_strategy}_incremental"  scope="{dataset}-{n_splits}"
-    NLP (cls)     group="nlp_classification"            scope="{dataset}[-lora]"
+    vision        group="{split_strategy}_incremental"  scope="{dataset}-{n_splits}{suffix}"
+    NLP (cls)     group="nlp_classification"            scope="{dataset}{suffix}"
     NLP (seq2seq) group="nlp_seq2seq"                   scope="{dataset}"
+
+where {suffix} is finetune_mode_suffix(args).
 """
 
 import os
@@ -35,6 +37,22 @@ def run_dir_name(args) -> str:
         f"-epochs-{args.epochs}"
         f"-seed:{args.seed}"
     )
+
+
+def finetune_mode_suffix(args) -> str:
+    """The scope suffix that keeps runs of different kinds apart: "" for a
+    full run, "-lora" for --finetune_mode lora, "-lora-reuse" for
+    --lora_chain reuse. They write files under the same names
+    (finetuned_{i}.pt / adapter_{i}.pt), so sharing a directory would make
+    one kind skip training on — or merge — the other's files.
+
+    Callers that build `args` by hand without the fields get a full run, or
+    the default merge chain."""
+    if getattr(args, "finetune_mode", "full") == "full":
+        return ""
+    if getattr(args, "lora_chain", "merge") == "reuse":
+        return f"-{args.finetune_mode}-reuse"
+    return f"-{args.finetune_mode}"
 
 
 def checkpoint_dir(args, *, group: str, scope: str) -> str:

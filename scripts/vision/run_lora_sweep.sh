@@ -7,7 +7,8 @@
 # Fine-tuning uses every visible GPU (DataParallel), so the runs go one after
 # another. Merging uses one GPU per process, so each n_splits merges in
 # parallel on its own GPU: the i-th entry of n_splits_list goes to the i-th
-# entry of gpu_ids. Logs go to logs/vision_lora_sweep/.
+# entry of gpu_ids. Logs go to logs/vision_lora_sweep/
+# (logs/vision_lora_reuse_sweep/ under lora_chain=reuse).
 #
 # A failing step does not stop the others — failures are listed at the end and
 # the exit status is non-zero. Finished splits / target environments are
@@ -15,7 +16,13 @@
 #
 # Everything the called scripts read can be overridden from the environment, e.g.
 #   n_splits_list="5" gpu_ids="0" seeds="3" bash scripts/vision/run_lora_sweep.sh
-# Only one sweep may run at a time: two would train the same splits at once.
+# Only one sweep per lora_chain may run at a time: two would train the same
+# splits at once. A merge and a reuse sweep write to different checkpoint and
+# log directories, so those two may run together.
+#
+# lora_chain=reuse trains one adapter across every split instead of one per
+# split (src/lora.py), e.g.
+#   lora_chain=reuse bash scripts/vision/run_lora_sweep.sh
 #
 # merge_space=core merges in Core Space instead (src/merging/core_space.py).
 # Fine-tuning is unchanged, so on finished adapters it only merges, e.g.
@@ -23,6 +30,7 @@
 #       bash scripts/vision/run_lora_sweep.sh
 
 export finetune_mode=lora
+export lora_chain=${lora_chain:-merge}  # merge reuse
 # The merges run in parallel and are CPU-heavy (the masked merge, OT). Left
 # alone, each process starts one thread per core, and the oversubscribed
 # machine (3 processes x 24 threads on 24 cores) ran the proposed method's
@@ -40,7 +48,11 @@ if [ ${#n_splits_arr[@]} -gt ${#gpu_arr[@]} ]; then
 fi
 
 script_dir=$(dirname "$0")
-log_dir=logs/vision_lora_sweep
+if [ "${lora_chain}" = "reuse" ]; then
+    log_dir=logs/vision_lora_reuse_sweep
+else
+    log_dir=logs/vision_lora_sweep
+fi
 mkdir -p ${log_dir}
 failed=()
 

@@ -13,12 +13,25 @@ merges each task's adapter into the weights before the next task starts
 (O-LoRA eq. 9), and the merge step rebuilds each task's model from the
 stored adapters alone.
 
-Only the adapter is saved per task. After task t the model is
+Only the adapter is saved per task. How sequential tasks chain together
+is --lora_chain:
 
-    W_t = W_0 + sum_{i<=t} (alpha / r) * B_i A_i
+    merge  (default, O-LoRA eq. 9) each task merges every earlier adapter
+           into the weights and trains a fresh one, so after task t
 
-on the adapted weights and W_0 everywhere else, so its task vector is the
-sum of the adapters' deltas (adapters_to_vector).
+               W_t = W_0 + sum_{i<=t} (alpha / r) * B_i A_i
+
+           and its task vector is the sum of the adapters' deltas
+           (adapters_to_vector).
+    reuse  one adapter is trained across every task: task t starts from
+           task t-1's A and B (load_adapter_into) on the unmerged W_0, so
+
+               W_t = W_0 + (alpha / r) * B_t A_t
+
+           and its task vector is adapter t's delta alone.
+
+Either way the adapted weights are the only ones that change; W_0 holds
+everywhere else.
 """
 
 import math
@@ -104,6 +117,49 @@ def adapter_deltas(adapter: dict) -> dict[str, torch.Tensor]:
     }
 
 
+def lora_chain(args) -> str:
+    """--lora_chain, for callers that build `args` by hand without the field
+    (they get the default, merge)."""
+    return getattr(args, "lora_chain", "merge")
+
+
+@torch.no_grad()
+def load_adapter_into(model: nn.Module, adapter: dict, config: LoraConfig) -> None:
+    """Copy a saved adapter's A and B into `model`'s injected LoRALinear
+    modules, in place (--lora_chain reuse: continue from the previous task).
+
+    Raises ValueError unless the adapter was trained with `config` and covers
+    exactly the model's LoRALinear modules with the same shapes. The config
+    is checked as a whole because a different alpha at the same r would pass
+    every shape check and silently rescale the adapter."""
+    if adapter["config"] != asdict(config):
+        raise ValueError(
+            f"adapter was trained with {adapter['config']}, "
+            f"but this run uses {asdict(config)}"
+        )
+    modules = {
+        name: m for name, m in model.named_modules() if isinstance(m, LoRALinear)
+    }
+    if set(adapter["modules"]) != set(modules):
+        missing = sorted(set(modules) - set(adapter["modules"]))
+        extra = sorted(set(adapter["modules"]) - set(modules))
+        raise ValueError(
+            f"adapter does not match the model's LoRA modules: "
+            f"missing {missing}, unexpected {extra}"
+        )
+    for name, m in modules.items():
+        for factor, param in (("A", m.lora_A), ("B", m.lora_B)):
+            saved = adapter["modules"][name][factor]
+            if saved.shape != param.shape:
+                raise ValueError(
+                    f"{name}.lora_{factor}: adapter has shape "
+                    f"{tuple(saved.shape)}, model has {tuple(param.shape)}"
+                )
+    for name, m in modules.items():
+        for factor, param in (("A", m.lora_A), ("B", m.lora_B)):
+            param.copy_(adapter["modules"][name][factor])
+
+
 @torch.no_grad()
 def merge_adapter_into(model: nn.Module, adapter: dict) -> None:
     """W += (alpha / r) * B A, in place, on a model without LoRALinear
@@ -124,11 +180,13 @@ def adapters_to_vector(adapters: list[dict]) -> dict[str, torch.Tensor]:
 
 
 def adapter_task_vectors(
-    adapters: list[dict], sequential: bool
+    adapters: list[dict], sequential: bool, chain: str = "merge"
 ) -> list[dict[str, torch.Tensor]]:
     """One task vector per task, over the adapted weights only. Under
-    sequential fine-tuning task i's model carries adapters 0..i, so its
-    vector is their running sum; otherwise each adapter stands alone."""
-    if sequential:
+    sequential fine-tuning with --lora_chain merge task i's model carries
+    adapters 0..i, so its vector is their running sum. Otherwise — independent
+    fine-tuning, or --lora_chain reuse, where adapter i already holds the whole
+    of task i's change — each adapter stands alone."""
+    if sequential and chain == "merge":
         return [adapters_to_vector(adapters[: i + 1]) for i in range(len(adapters))]
     return [adapters_to_vector([a]) for a in adapters]

@@ -23,15 +23,26 @@ seed=${seed:-3}                 # 3 4 5
 # split (src/lora.py, lr 1e-3); its logs go under a -lora dir_name so they
 # never mix with a full run's.
 finetune_mode=${finetune_mode:-full}  # full lora
+# lora only. merge: an adapter per split, merged into the weights before the
+# next (O-LoRA eq. 9). reuse: one adapter trained across every split
+# (src/lora.py); its checkpoints and logs go under -lora-reuse instead of
+# -lora so the two never mix.
+lora_chain=${lora_chain:-merge}  # merge reuse
+# The suffix every -lora directory takes: lora, or lora-reuse.
+if [ "${finetune_mode}" = "lora" ] && [ "${lora_chain}" = "reuse" ]; then
+    mode_tag=lora-reuse
+else
+    mode_tag=${finetune_mode}
+fi
 if [ "${finetune_mode}" = "lora" ]; then
-    dir_name=${dir_name:-DEFAULT_NAME-lora}
+    dir_name=${dir_name:-DEFAULT_NAME-${mode_tag}}
 else
     dir_name=${dir_name:-DEFAULT_NAME}
 fi
 wandb_entity_name=${wandb_entity_name:-keihiroshima}
 
 echo "======================================================================================"
-echo "Finetuning ${model} (${finetune_mode}) on ${dataset}-${n_splits} (pattern: ${task_seq}) seed=${seed}"
+echo "Finetuning ${model} (${mode_tag}) on ${dataset}-${n_splits} (pattern: ${task_seq}) seed=${seed}"
 echo "======================================================================================"
 
 out_dir=outs/${model}/sequential_finetuning/class_incremental/${dir_name}/${dataset}-${n_splits}/taskseq_${task_seq}
@@ -49,6 +60,7 @@ uv run python finetune_splitted.py \
     --split_strategy class \
     --sequential-finetuning \
     --finetune_mode ${finetune_mode} \
+    --lora_chain ${lora_chain} \
     --seed ${seed} \
     --results_db ${log_dir} \
     --taskseq_pattern ${task_seq} \

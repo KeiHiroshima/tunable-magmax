@@ -81,6 +81,12 @@ def _parse_args():
     # nlp
     p.add_argument("--model", default="t5-base")
     p.add_argument("--finetune_mode", default="full", choices=["full", "lora"])
+    p.add_argument(
+        "--lora_chain",
+        default="merge",
+        choices=["merge", "reuse"],
+        help="nlp, --finetune_mode lora: must match the --lora_chain the run was trained with",
+    )
     p.add_argument("--dataset", default="StdCL", choices=["StdCL", "LSB"])
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--taskseq_pattern", default="1", help="nlp: O-LoRA order, 1-3 for StdCL, 4-6 for LSB")
@@ -97,8 +103,8 @@ def _parse_args():
 def _default_competitors(backend: str) -> dict[str, str]:
     if backend == "vision":
         return dict(COMPETITOR_ALL_DICT)
-    # StdCL/LSB have no similarity_metric variants of the proposed method — only the
-    # plain "masked_magmax_with_targetdata" key exists for it.
+    # StdCL/LSB have no similarity_metric variants of the preference-weighted
+    # merges — only their plain "<merge_fn>" keys exist.
     return {k: v for k, v in COMPETITOR_ALL_DICT.items() if "-" not in k}
 
 
@@ -117,6 +123,7 @@ def _build_path_fn(args):
         taskseq_pattern=args.taskseq_pattern,
         sequential_finetuning=args.sequential_finetuning,
         finetune_mode=args.finetune_mode,
+        lora_chain=args.lora_chain,
     )
 
 

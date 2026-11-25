@@ -19,7 +19,23 @@ def merge_methods(
     merge_func="",
     weight_each_task=None,
 ):
+    """TIES-Merging: trim each task vector, elect a sign per element, and
+    aggregate the entries that agree with it.
+
+    `weight_each_task` (Tunable TIES) weights every task in the sign election
+    and in the disjoint mean. Uniform weights give plain TIES exactly; a task
+    weighted 0 takes no part in either. Pruning is per task, so it is the same
+    with or without weights.
+    """
     all_checks = flat_task_checks.clone()
+    weights = None
+    if weight_each_task is not None:
+        weights = torch.as_tensor(
+            weight_each_task, dtype=all_checks.dtype, device=all_checks.device
+        )
+        assert weights.shape == (all_checks.shape[0],), (
+            f"{weights.numel()} weights for {all_checks.shape[0]} task vectors"
+        )
 
     if "nf" in reset_type and reset_thresh != "none":
         logger.info(f"Pruning: {reset_type} {reset_thresh}")
@@ -42,20 +58,17 @@ def merge_methods(
 
     if resolve_method != "none":  # default
         logger.info(f"RESOLVING SIGN: {resolve_method}")
-        final_signs = resolve_sign(updated_checks, resolve_method)
+        final_signs = resolve_sign(updated_checks, resolve_method, weights)
         assert final_signs is not None
     else:
         logger.info("Not RESOLVING SIGN")
         final_signs = None
 
-    if weight_each_task is not None:
-        merged_tv = disjoint_merge_weighted(
-            updated_checks, merge_func, final_signs, weight_each_task
-        )
-    elif "dis" in merge_func:  # default
+    if "dis" in merge_func:  # default
         logger.info(f"Disjoint AGGREGATION: {merge_func}")
-        merged_tv = disjoint_merge(updated_checks, merge_func, final_signs)
+        merged_tv = disjoint_merge(updated_checks, merge_func, final_signs, weights)
     else:
+        assert weights is None, "only the disjoint aggregation takes task weights"
         logger.info(f"Basic AGGREGATION: {merge_func}")
         merged_tv = aggregate(updated_checks, merge_func, final_signs)
 
@@ -171,9 +184,14 @@ def less_than_std_mask(tensor, factor, return_mask=False):
 ### RESOLVING SIGN ###
 
 
-def resolve_sign(Tensor, resolve_method):
+def resolve_sign(Tensor, resolve_method, weights=None):
+    """`weights` (one per task, i.e. per row) weight each task's vote; only the
+    "mass" election takes them."""
     if resolve_method == "mass":  # default
-        sign_to_mult = torch.sign(Tensor.sum(dim=0))
+        votes = Tensor if weights is None else Tensor * weights[:, None]
+        sign_to_mult = torch.sign(votes.sum(dim=0))
+    elif weights is not None:
+        raise ValueError(f"Sign resolve method {resolve_method} takes no task weights.")
     elif resolve_method == "normfrac":
         sign_to_mult = normfrac_based_sign(Tensor)
     elif resolve_method == "normmass":
@@ -209,7 +227,11 @@ def resolve_zero_signs(sign_to_mult, method="majority"):
 ### AGGREGATION ###
 
 
-def disjoint_merge(Tensor, merge_func, sign_to_mult):
+def disjoint_merge(Tensor, merge_func, sign_to_mult, weights=None):
+    """Aggregate, per element, the entries whose sign agrees with the elected
+    one. With `weights` (one per task) "mean" is the weighted mean over those
+    entries, sum_i w_i x_i / sum_i w_i; without, every task weighs 1, which is
+    the plain mean over the agreeing entries."""
     merge_func = merge_func.split("-")[-1]
 
     # If sign is provided then we select the corresponding entries and aggregate.
@@ -223,65 +245,18 @@ def disjoint_merge(Tensor, merge_func, sign_to_mult):
         rows_to_keep = Tensor != 0
         selected_entries = Tensor * rows_to_keep
 
-    if merge_func == "mean":  # default
-        non_zero_counts = (selected_entries != 0).sum(dim=0).float()
-        disjoint_aggs = torch.sum(selected_entries, dim=0) / torch.clamp(
-            non_zero_counts, min=1
-        )
-    elif merge_func == "sum":
-        disjoint_aggs = torch.sum(selected_entries, dim=0)
-    elif merge_func == "max":
-        disjoint_aggs = selected_entries.abs().max(dim=0)[0]
-        disjoint_aggs *= sign_to_mult
-    else:
-        raise ValueError(f"Merge method {merge_func} is not defined.")
-
-    return disjoint_aggs
-
-
-def disjoint_merge_weighted(Tensor, merge_func, sign_to_mult, weight_each_task):
-    merge_func = merge_func.split("-")[-1]
-    assert merge_func == "mean", (
-        "Only mean merge is supported for weighted disjoint merge."
-    )
-
-    # If sign is provided then we select the corresponding entries and aggregate.
-    if sign_to_mult is not None:  # default
-        rows_to_keep = torch.where(
-            sign_to_mult.unsqueeze(0) > 0, Tensor > 0, Tensor < 0
-        )
-        selected_entries = Tensor * rows_to_keep
-    # Else we select all non-zero entries and aggregate.
-    else:
-        rows_to_keep = Tensor != 0
-        selected_entries = Tensor * rows_to_keep
+    if weights is not None and merge_func != "mean":
+        raise ValueError(f"Merge method {merge_func} takes no task weights.")
 
     if merge_func == "mean":  # default
-        Tensor_weighted = (
-            selected_entries
-            * torch.tensor(weight_each_task, requires_grad=False)[:, None]
+        if weights is None:
+            weights = torch.ones(Tensor.shape[0], dtype=Tensor.dtype, device=Tensor.device)
+        weighted_sum = (selected_entries * weights[:, None]).sum(dim=0)
+        weight_of_kept = (rows_to_keep * weights[:, None]).sum(dim=0)
+        # No agreeing entry: the sum is 0 too, so any non-zero divisor works.
+        disjoint_aggs = weighted_sum / torch.where(
+            weight_of_kept == 0, torch.ones_like(weight_of_kept), weight_of_kept
         )
-
-        sum_weight_non_zero = torch.sum(
-            rows_to_keep.float()
-            * torch.tensor(weight_each_task, requires_grad=False)[:, None],
-            dim=0,
-        )
-        sum_weight_non_zero_filled = torch.where(
-            sum_weight_non_zero == 0, torch.tensor(1.0), sum_weight_non_zero
-        )  # fill zero entries with 1 to avoid zero division
-
-        disjoint_aggs = torch.sum(Tensor_weighted, dim=0) / sum_weight_non_zero_filled
-        logger.debug(f"rows_to_keep: \n\t{rows_to_keep[:, :10]}")
-        logger.debug(f"selected_entries: \n\t{selected_entries[:, :10]}")
-        logger.debug(f"Tensor_weighted: \n\t{Tensor_weighted[:, :10]}")
-        logger.debug(
-            f"torch.sum(Tensor_weighted, dim=0): \n\t{torch.sum(Tensor_weighted, dim=0)[:10]}"
-        )
-        logger.debug(
-            f"sum_weight_non_zero_filled: \n\t{sum_weight_non_zero_filled[:10]}"
-        )
-        logger.debug(f"disjoint_aggs: \n\t{disjoint_aggs[:10]}")
     elif merge_func == "sum":
         disjoint_aggs = torch.sum(selected_entries, dim=0)
     elif merge_func == "max":
